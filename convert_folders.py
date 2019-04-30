@@ -373,8 +373,8 @@ def get_child_item_type(item_id):
 
 def create_snapshot(set_id):
     ts = time.time()
-    time_stamp = datetime.datetime.fromtimestamp(ts).strftime('%d-%m-%Y_%H:%M:%S')
-    file_name = 'backup for set [ID:' + str(set_id) + '] ' + str(time_stamp) + '.json'
+    time_stamp = datetime.datetime.fromtimestamp(ts).strftime('%d-%m-%Y_%H-%M-%S')
+    file_name = 'backup_set_ID-' + str(set_id) + '___' + str(time_stamp) + '.json'
     with open(file_name, 'w') as outfile:
         json.dump(items_list, outfile)
 
