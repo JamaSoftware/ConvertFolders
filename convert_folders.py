@@ -3,8 +3,9 @@ import json
 import datetime
 import time as time
 import configparser
+import logging
 from progress.bar import ChargingBar
-from py_jama_rest_client.client import JamaClient
+from py_jama_rest_client.client import JamaClient, APIException
 
 # make the client and config globally available
 global config
@@ -21,6 +22,11 @@ global pick_list_option_map
 global item_count
 global items_list
 
+# dont reset this list. we will need it as a post process to
+# re-sync all the converted items.
+global synced_items_list
+synced_items_list = []
+
 # stats for nerds (don't reset these values)
 global conversion_count
 global moved_item_count
@@ -28,7 +34,8 @@ conversion_count = 0
 moved_item_count = 0
 
 
-def reset_globals():
+
+def init_globals():
     global folder_item_type
     global text_item_type
     global set_item_type
@@ -38,6 +45,7 @@ def reset_globals():
     global pick_list_option_map
     global item_count
     global items_list
+    global synced_items_list
     folder_item_type = None
     text_item_type = None
     set_item_type = None
@@ -45,6 +53,18 @@ def reset_globals():
     item_id_to_child_map = {}
     item_id_to_item_map = {}
     pick_list_option_map = {}
+    item_count = 0
+    items_list = []
+
+
+def reset_set_item_variables():
+    global item_id_to_child_map
+    global item_id_to_item_map
+    global item_count
+    global items_list
+    global synced_items_list
+    item_id_to_child_map = {}
+    item_id_to_item_map = {}
     item_count = 0
     items_list = []
 
@@ -57,23 +77,39 @@ def init_jama_client():
     return JamaClient(instance_url, credentials=(username, password), oauth=using_oauth)
 
 
+def init_logging():
+    # Get current date and time for the log file name
+    timestamp = datetime.datetime.now()
+    # Lets make the datetime pretty
+    pretty_timestamp = timestamp.strftime('%Y-%m-%d_%H-%M-%S')
+    # Setup log file name
+    logfile = 'conversion-logs__' + pretty_timestamp + '.log'
+    logging.basicConfig(filename=logfile, level=logging.INFO)
+
+
 def validate_parameters():
     set_ids_string = config['PARAMETERS']['set item ids']
-    api_field_name = config['PARAMETERS']['api field name']
-    field_value = config['PARAMETERS']['field value']
+    api_field_name = config['PARAMETERS']['folder api field name']
+    folder_field_value = config['PARAMETERS']['folder field value']
 
     if set_ids_string is None or set_ids_string == '':
         print("ERROR: a value for the 'set item ids' parameter in config file must be provided")
         return False
     if api_field_name is None or api_field_name == '':
-        print("ERROR: a value for the 'api field name' parameter in config file must be provided")
+        print("ERROR: a value for the 'folder api field name' parameter in config file must be provided")
         return False
-    if field_value is None or field_value == '':
-        print("ERROR: a value for the 'field value' parameter in config file must be provided")
+    if folder_field_value is None or folder_field_value == '':
+        print("ERROR: a value for the 'folder field value' parameter in config file must be provided")
         return False
 
     return True
 
+def get_resync_items():
+    reync_items = config['PARAMETERS']['resync items'].lower()
+    if reync_items == 'false' or reync_items == 'no':
+        return False
+    else:
+        return True
 
 def get_preserve_order():
     preserve_order = config['OPTIONS']['preserve order'].lower()
@@ -111,7 +147,7 @@ def get_set_ids():
 def validate_config():
     # both credentials and parameters are required
     credentials = ['instance url', 'using oauth', 'username', 'password']
-    parameters = ['set item ids', 'api field name', 'field value']
+    parameters = ['set item ids', 'folder api field name', 'folder field value']
     # these are optional
     options = ['preserve order', 'stats for nerds', 'create snapshot']
 
@@ -174,18 +210,18 @@ def get_meta_data():
 
 
 # helper method to determine if this is an item that we are going to convert
-def is_conversion_item(fields, item_type_id):
+def is_folder_conversion_item(fields, item_type_id):
     # is this already a folder? no work needed here then
     if item_type_id == folder_item_type.get('id'):
         return False
 
     field_definitions = item_type_map[item_type_id].get('fields')
-    # match on the api field name
+    # match on the folder api field name
     key = None
     value = None
 
-    api_field_name = str(config['PARAMETERS']['api field name'])
-    field_value = str(config['PARAMETERS']['field value'])
+    api_field_name = str(config['PARAMETERS']['folder api field name'])
+    field_value = str(config['PARAMETERS']['folder field value'])
 
     # determine what key were working with here. custom fields will be fieldName $ itemTypeID
     if api_field_name in fields:
@@ -229,15 +265,59 @@ def get_pick_list_option(pick_list_option_id):
         return pick_list_option
 
 
+def update_resync_list(old_id, new_id):
+    global synced_items_list
+    updated_synced_item_list = []
+    for synced_items in synced_items_list:
+
+        # the synced item list is a list of tuples. which are not mutable
+        # first entry
+        if synced_items[0] == old_id:
+            updated_synced_item_list.append((new_id, synced_items[1]))
+        elif synced_items[1] == old_id:
+            updated_synced_item_list.append((synced_items[0], new_id))
+        else:
+            updated_synced_item_list.append(synced_items)
+
+    synced_items_list = updated_synced_item_list
+
+def resync_items(bar):
+    for synced_items in synced_items_list:
+        try:
+            client.post_synced_item(synced_items[0], synced_items[1])
+        except APIException as e:
+            print('ERROR: unable to sync item ID:[' + synced_items[0] + '] to item ID:[' + synced_items[1] + ']\n' 
+                  '       This is likely due to the item types not matching. Make sure need to include all the sets \n' +
+                  '       that are using reuse and sync.')
+
+        bar.next()
+
+
+def process_synced_items(item_id):
+    # do we care about synced items?
+    if get_resync_items():
+        # lets check to see if there are any synced items on this.
+        synced_items = client.get_synced_items(item_id)
+        if synced_items is not None and len(synced_items) > 0:
+            # save these connections, because we are going to re-establish
+            # these later in the script execution.
+            for synced_item in synced_items:
+                synced_item_id = synced_item.get('id')
+                in_list_one = (item_id, synced_item_id) in synced_items_list
+                in_list_two = (synced_item_id, item_id) in synced_items_list
+                if not in_list_one and not in_list_two:
+                    synced_items_list.append((item_id, synced_item_id))
+
+
 def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
     # children_items = client.get_children_items(root_item_id)
-    global moved_item_count, conversion_count
+    global moved_item_count, conversion_count, synced_items_list
     children_items = item_id_to_child_map.get(root_item_id)
 
     # lets first do a quick pass to see if we need to process these children items
     conversions_detected = False
     for child_item in children_items:
-        if is_conversion_item(child_item.get('fields'), child_item.get('itemType')):
+        if is_folder_conversion_item(child_item.get('fields'), child_item.get('itemType')):
             conversions_detected = True
             break
 
@@ -249,10 +329,13 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
 
         # can we skip the work here?
         if conversions_detected:
+
             # we got a match on the value? lets "convert" it
-            if is_conversion_item(fields, item_type_id):
+            if is_folder_conversion_item(fields, item_type_id):
+                process_synced_items(item_id)
                 folder_id = convert_item(child_item, child_item_type, root_item_id)
                 item_id_to_child_map[folder_id] = item_id_to_child_map.get(item_id)
+                update_resync_list(item_id, folder_id)
                 item_id = folder_id
                 conversion_count += 1
 
@@ -383,7 +466,7 @@ if __name__ == '__main__':
     global config
     global client
     start = time.time()
-    reset_globals()
+    init_globals()
     print('\n'
           + '     ____     __   __          _____                      __           \n'
           + '    / __/__  / /__/ /__ ____  / ___/__  ___ _  _____ ____/ /____  ____ \n'
@@ -421,12 +504,12 @@ if __name__ == '__main__':
 
     # lets validate the user specified set item ids. this script will only work with sets
     if not validate_set_item_ids(set_item_ids):
-        print('Invalid set ids, please confirm that these ids are valid items and of type set.')
+        print('Invalid set id(s), please confirm that these ids are valid and of type set.')
         sys.exit()
     else:
         print('Specified Set IDs ' + str(set_item_ids) + ' are valid')
 
-    print(str(set_item_ids) + ' sets being processed, each set will be processed sequentially.')
+    print(str(set_item_ids) + ' sets being processed, each set will be processed sequentially. \n')
     # loop through the list of set item ids
     for set_item_id in set_item_ids:
         set_item = client.get_item(set_item_id)
@@ -453,11 +536,20 @@ if __name__ == '__main__':
         # create a temp folder
         temp_folder_id = create_temp_folder(set_item_id, child_item_type)
 
-        with ChargingBar('Processing Items', max=item_count, suffix='%(percent).1f%% - %(eta)ds') as bar:
-            process_children_items(set_item_id, temp_folder_id, child_item_type, bar)
+        if item_count > 0:
+            with ChargingBar('Processing Items', max=item_count, suffix='%(percent).1f%% - %(eta)ds') as bar:
+                process_children_items(set_item_id, temp_folder_id, child_item_type, bar)
+                bar.finish()
 
         client.delete_item(temp_folder_id)
-        reset_globals()
+        print('Finished processing set id: [' + str(set_item_id) + ']\n')
+        reset_set_item_variables()
+
+    # do we care about reuse and sync?
+    if get_resync_items() and len(synced_items_list) > 0:
+        with ChargingBar('ReSyncing Converted Folders', max=len(synced_items_list), suffix='%(percent).1f%% - %(eta)ds') as bar:
+            resync_items(bar)
+            bar.finish()
 
     print('\nScript execution finished')
 

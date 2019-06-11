@@ -58,7 +58,6 @@ class JamaClient:
         """Runs a check on the user credentials and instance url and returns a response."""
         return self.__core.get('')
 
-
     def get_projects(self):
         """This method will return all projects as JSON object
         :return: JSON Array of Item Objects.
@@ -133,6 +132,24 @@ class JamaClient:
         resource_path = 'items/' + str(parent_item_id) + '/children'
         children_items = self.__get_all(resource_path)
         return children_items
+
+    def get_synced_items(self, item_id):
+        """This method will return a list of synced items for a specified parent item ID."""
+        resource_path = 'items/' + str(item_id) + '/synceditems'
+        synced_items = self.__get_all(resource_path)
+        return synced_items
+
+    def post_synced_item(self, item_id, synced_item_id):
+        resource_path = 'items/' + str(item_id) + '/synceditems'
+        headers = {'content-type': 'application/json'}
+        body = {'item': synced_item_id}
+        # Make the API Call
+        response = self.__core.post(resource_path, data=json.dumps(body), headers=headers)
+        # Validate response
+        JamaClient.__handle_response_status(response)
+        return response.json()['meta']['id']
+
+
 
     def get_abstract_items(self,
                            project = None,
