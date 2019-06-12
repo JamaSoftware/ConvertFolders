@@ -89,6 +89,13 @@ def init_logging():
     logging.basicConfig(filename=logfile, level=logging.INFO)
 
 
+def log(message, is_error):
+    print(message)
+    if is_error:
+        logging.error(message)
+    else:
+        logging.info(message)
+
 def validate_parameters():
     set_ids_string = config['PARAMETERS']['set item ids']
     folder_api_field_name = config['PARAMETERS']['folder api field name']
@@ -97,19 +104,19 @@ def validate_parameters():
     text_field_value = config['PARAMETERS']['text field value']
 
     if set_ids_string is None or set_ids_string == '':
-        print("ERROR: a value for the 'set item ids' parameter in config file must be provided")
+        log("A value for the 'set item ids' parameter in config file must be provided", True)
         return False
     if folder_api_field_name is None or folder_api_field_name == '':
-        print("ERROR: a value for the 'folder api field name' parameter in config file must be provided")
+        log("A value for the 'folder api field name' parameter in config file must be provided", True)
         return False
     if folder_field_value is None or folder_field_value == '':
-        print("ERROR: a value for the 'folder field value' parameter in config file must be provided")
+        log("A value for the 'folder field value' parameter in config file must be provided", True)
         return False
     if text_api_field_name is None or text_api_field_name == '':
-        print("ERROR: a value for the 'text api field name' parameter in config file must be provided")
+        log("A value for the 'text api field name' parameter in config file must be provided", True)
         return False
     if text_field_value is None or text_field_value == '':
-        print("ERROR: a value for the 'text field value' parameter in config file must be provided")
+        log("A value for the 'text field value' parameter in config file must be provided", True)
         return False
 
     return True
@@ -180,13 +187,13 @@ def validate_config():
     # lets run some quick validations here
     for credential in credentials:
         if credential not in config['CREDENTIALS']:
-            print("Config missing required credential '" + credential
-                  + "', confirm this is present in the config.ini file.")
+            log("Config missing required credential '" + credential
+                  + "', confirm this is present in the config.ini file.", True)
             return False
     for parameter in parameters:
         if parameter not in config['PARAMETERS']:
-            print("Config missing required parameter '" + parameter
-                  + "', confirm this is present in the config.ini file.")
+            log("Config missing required parameter '" + parameter
+                  + "', confirm this is present in the config.ini file.", True)
             return False
 
     return True
@@ -327,9 +334,9 @@ def resync_items(bar):
         try:
             client.post_synced_item(synced_items[0], synced_items[1])
         except APIException as e:
-            print('ERROR: unable to sync item ID:[' + synced_items[0] + '] to item ID:[' + synced_items[1] + ']\n' 
-                  '       This is likely due to the item types not matching. Make sure need to include all the sets \n' +
-                  '       that are using reuse and sync.')
+            log('unable to sync item ID:[' + synced_items[0] + '] to item ID:[' + synced_items[1] + ']\n' 
+                  'This is likely due to the item types not matching. Make sure need to include all the sets \n' +
+                  'that are using reuse and sync.', True)
 
         bar.next()
 
@@ -408,7 +415,10 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
 #   3. delete the original item
 def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     item_id = item.get("id")
+    log('Detected item ID:[' + str(item_id) + '] converting this item to a FOLDER...', False)
     folder_id = create_folder(item, child_item_type, parent_item_type_id)
+    if folder_id > 0:
+        log('Successfully converted item to type text', False)
     children = client.get_children_items(item_id)
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
@@ -425,7 +435,10 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
 #   3. delete the original item
 def convert_item_to_text(item, parent_item_type_id):
     item_id = item.get("id")
+    log('Detected item ID:[' + str(item_id) + '] converting this item to a TEXT...', False)
     text_id = create_text(item, parent_item_type_id)
+    if text_id > 0:
+        log('Successfully converted item to type text', False)
     text_item_type_id = text_item_type.get('id')
     children = client.get_children_items(item_id)
     # we will need to iterate over all the children here, and move them to the new folder
@@ -435,7 +448,7 @@ def convert_item_to_text(item, parent_item_type_id):
             child_item_id = child.get("id")
             move_item_to_parent_location(child_item_id, text_id)
         else:
-            print('unable to move item ID:[' + str(child_item_id) + '] because this item is NOT of type text.' )
+            log('unable to move item ID:[' + str(child_item_id) + '] because this item is NOT of type text.', True)
 
     # there should be zero children in the original item now.
     client.delete_item(item_id)
@@ -490,9 +503,14 @@ def create_folder(item, child_item_type, parent_item_id):
     project = item.get('project')
     folder_item_type_id = folder_item_type.get('id')
     location = {'item': parent_item_id}
-    response = client.post_item(project, folder_item_type_id, child_item_type, location, fields)
+    try:
+        response = client.post_item(project, folder_item_type_id, child_item_type, location, fields)
+    except APIException as e:
+        log('Failed to convert item to folder. Exception: ' + str(e) + '\n'
+            'item:' + str(item) + '\n' +
+            'parent item ID:' + str(parent_item_id), True)
+        return -1
     return response
-
 
 
 # create a text item
@@ -502,7 +520,13 @@ def create_text(item, parent_item_id):
     project = item.get('project')
     text_item_type_id = text_item_type.get('id')
     location = {'item': parent_item_id}
-    response = client.post_item(project, text_item_type_id, text_item_type_id, location, fields)
+    try:
+        response = client.post_item(project, text_item_type_id, text_item_type_id, location, fields)
+    except APIException as e:
+        log('Failed to convert item to text. Exception: ' + str(e) + '\n'
+            'item:' + str(item) + '\n' +
+            'parent item ID:' + str(parent_item_id), True)
+        return -1
     return response
 
 
@@ -548,13 +572,13 @@ if __name__ == '__main__':
     global client
     start = time.time()
     init_globals()
-    print('\n'
+    init_logging()
+    log('\n'
           + '     ____     __   __          _____                      __           \n'
           + '    / __/__  / /__/ /__ ____  / ___/__  ___ _  _____ ____/ /____  ____ \n'
           + '   / _// _ \/ / _  / -_) __/ / /__/ _ \/ _ \ |/ / -_) __/ __/ _ \/ __/ \n'
           + '  /_/  \___/_/\_,_/\__/_/    \___/\___/_//_/___/\__/_/  \__/\___/_/    \n'
-          + '                               Jama Software - Professional Services   \n'
-          )
+          + '                               Jama Software - Professional Services   \n', False)
 
     config = configparser.ConfigParser()
     config.read('config.ini')
@@ -567,10 +591,10 @@ if __name__ == '__main__':
 
     # validate user data
     if not validate_user_credentials(client):
-        print('Invalid username and/or password, please check your credentials and try again.')
+        log('Invalid username and/or password, please check your credentials and try again.', True)
         sys.exit()
     else:
-        print('Connected to <' + config['CREDENTIALS']['instance url'] + '>')
+        log('Connected to <' + config['CREDENTIALS']['instance url'] + '>', False)
 
     # validate all the parameters for this script
     set_item_ids = get_set_ids()
@@ -579,41 +603,41 @@ if __name__ == '__main__':
         sys.exit()
 
     if not get_convert_folders() and not get_convert_texts():
-        print('Both convert folders and texts set to false. no work needed, aborting...')
+        log('Both convert folders and texts set to false. no work needed, aborting...', True)
         sys.exit()
 
     # pull down all the meta data for this instance
-    print('Retrieving Instance meta data...')
+    log('Retrieving Instance meta data...', False)
     get_meta_data()
-    print('Successfully retrieved ' + str(len(item_type_map)) + ' item type definitions.')
+    log('Successfully retrieved ' + str(len(item_type_map)) + ' item type definitions.', False)
 
     # lets validate the user specified set item ids. this script will only work with sets
     if not validate_set_item_ids(set_item_ids):
-        print('Invalid set id(s), please confirm that these ids are valid and of type set.')
+        log('Invalid set id(s), please confirm that these ids are valid and of type set.', True)
         sys.exit()
     else:
-        print('Specified Set IDs ' + str(set_item_ids) + ' are valid')
+        log('Specified Set IDs ' + str(set_item_ids) + ' are valid', False)
 
-    print(str(set_item_ids) + ' sets being processed, each set will be processed sequentially. \n')
+    log(str(set_item_ids) + ' sets being processed, each set will be processed sequentially. \n', False)
     # loop through the list of set item ids
     for set_item_id in set_item_ids:
         set_item = client.get_item(set_item_id)
 
-        # print out some data aboouot
-        print('Processing Set <' + config['CREDENTIALS']['instance url'] + '/perspective.req#/containers/'
+        # show some data about how we just did
+        log('Processing Set <' + config['CREDENTIALS']['instance url'] + '/perspective.req#/containers/, False'
               + str(set_item_id)
               + '?projectId='
               + str(set_item.get('project'))
               + '>')
 
         # lets pull the entire hierarchy under this set
-        print('Retrieving all children items from set id: [' + str(set_item_id) + '] ...')
+        log('Retrieving all children items from set id: [' + str(set_item_id) + '] ...', False)
         retrieve_items(set_item_id)
-        print('Successfully retrieved ' + str(item_count) + ' items.')
+        log('Successfully retrieved ' + str(item_count) + ' items.', False)
 
         # create a backup of the data
         if get_create_snapshot():
-            print('Saving current state of item in set [' + str(set_item_id) + '] to json file.')
+            log('Saving current state of item in set [' + str(set_item_id) + '] to json file.', False)
             create_snapshot(set_item_id)
 
         # get the child item type form the root set
@@ -627,7 +651,7 @@ if __name__ == '__main__':
                 bar.finish()
 
         client.delete_item(temp_folder_id)
-        print('Finished processing set id: [' + str(set_item_id) + ']\n')
+        log('Finished processing set id: [' + str(set_item_id) + ']\n', False)
         reset_set_item_variables()
 
     # do we care about reuse and sync?
@@ -636,12 +660,12 @@ if __name__ == '__main__':
             resync_items(bar)
             bar.finish()
 
-    print('\nScript execution finished')
+    log('\nScript execution finished', False)
 
     # here are some fun stats for nerds
     if get_stats_for_nerds():
         elapsed_time = '%.2f' % (time.time() - start)
-        print('total execution time: ' + elapsed_time + ' seconds')
-        print('# items converted into folder(s): ' + str(folder_conversion_count))
-        print('# items converted into text(s): ' + str(text_conversion_count))
-        print('# items re-indexed: ' + str(moved_item_count))
+        log('total execution time: ' + elapsed_time + ' seconds', False)
+        log('# items converted into folder(s): ' + str(folder_conversion_count), False)
+        log('# items converted into text(s): ' + str(text_conversion_count), False)
+        log('# items re-indexed: ' + str(moved_item_count), False)
