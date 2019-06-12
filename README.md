@@ -22,3 +22,9 @@ converted into folders, instead it will create new item and move over all its ch
 Also the API does not allow to reorder an item under the same parent, becuase of this all items must be moved
 into a temp location and then moved back under it's original parent item. Because of these two limitations this 
 script can take a very long time to process a large set of items. 
+
+### Synced Items
+In order for this script to work with synced items, you will need to include all the synced items within the same run.
+Once all the items are converted and re-indexed it then will re-establish the synced items. Its done 
+this way because items cannot be synced of different item types, so all the items need to be converted 
+first then the syncs be made.
