@@ -28,9 +28,11 @@ global synced_items_list
 synced_items_list = []
 
 # stats for nerds (don't reset these values)
-global conversion_count
+global folder_conversion_count
+global text_conversion_count
 global moved_item_count
-conversion_count = 0
+folder_conversion_count = 0
+text_conversion_count = 0
 moved_item_count = 0
 
 
@@ -89,20 +91,44 @@ def init_logging():
 
 def validate_parameters():
     set_ids_string = config['PARAMETERS']['set item ids']
-    api_field_name = config['PARAMETERS']['folder api field name']
+    folder_api_field_name = config['PARAMETERS']['folder api field name']
     folder_field_value = config['PARAMETERS']['folder field value']
+    text_api_field_name = config['PARAMETERS']['text api field name']
+    text_field_value = config['PARAMETERS']['text field value']
 
     if set_ids_string is None or set_ids_string == '':
         print("ERROR: a value for the 'set item ids' parameter in config file must be provided")
         return False
-    if api_field_name is None or api_field_name == '':
+    if folder_api_field_name is None or folder_api_field_name == '':
         print("ERROR: a value for the 'folder api field name' parameter in config file must be provided")
         return False
     if folder_field_value is None or folder_field_value == '':
         print("ERROR: a value for the 'folder field value' parameter in config file must be provided")
         return False
+    if text_api_field_name is None or text_api_field_name == '':
+        print("ERROR: a value for the 'text api field name' parameter in config file must be provided")
+        return False
+    if text_field_value is None or text_field_value == '':
+        print("ERROR: a value for the 'text field value' parameter in config file must be provided")
+        return False
 
     return True
+
+
+def get_convert_folders():
+    convert_folders = config['PARAMETERS']['convert folders'].lower()
+    if convert_folders == 'false' or convert_folders == 'no':
+        return False
+    else:
+        return True
+
+def get_convert_texts():
+    convert_texts = config['PARAMETERS']['convert texts'].lower()
+    if convert_texts == 'false' or convert_texts == 'no':
+        return False
+    else:
+        return True
+
 
 def get_resync_items():
     reync_items = config['PARAMETERS']['resync items'].lower()
@@ -209,8 +235,22 @@ def get_meta_data():
         item_type_map[item_type_id] = item_type
 
 
-# helper method to determine if this is an item that we are going to convert
 def is_folder_conversion_item(fields, item_type_id):
+    if get_convert_folders():
+        return is_conversion_item(fields, item_type_id, 'folder')
+    else:
+        return False
+
+
+def is_text_conversion_item(fields, item_type_id):
+    if get_convert_texts():
+        return is_conversion_item(fields, item_type_id, 'text')
+    else:
+        return False
+
+
+# helper method to determine if this is an item that we are going to convert
+def is_conversion_item(fields, item_type_id, type_string):
     # is this already a folder? no work needed here then
     if item_type_id == folder_item_type.get('id'):
         return False
@@ -220,8 +260,8 @@ def is_folder_conversion_item(fields, item_type_id):
     key = None
     value = None
 
-    api_field_name = str(config['PARAMETERS']['folder api field name'])
-    field_value = str(config['PARAMETERS']['folder field value'])
+    api_field_name = str(config['PARAMETERS'][type_string + ' api field name'])
+    field_value = str(config['PARAMETERS'][type_string + ' field value'])
 
     # determine what key were working with here. custom fields will be fieldName $ itemTypeID
     if api_field_name in fields:
@@ -281,6 +321,7 @@ def update_resync_list(old_id, new_id):
 
     synced_items_list = updated_synced_item_list
 
+
 def resync_items(bar):
     for synced_items in synced_items_list:
         try:
@@ -311,7 +352,7 @@ def process_synced_items(item_id):
 
 def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
     # children_items = client.get_children_items(root_item_id)
-    global moved_item_count, conversion_count, synced_items_list
+    global moved_item_count, folder_conversion_count, text_conversion_count, synced_items_list
     children_items = item_id_to_child_map.get(root_item_id)
 
     # lets first do a quick pass to see if we need to process these children items
@@ -320,6 +361,10 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
         if is_folder_conversion_item(child_item.get('fields'), child_item.get('itemType')):
             conversions_detected = True
             break
+        if is_text_conversion_item(child_item.get('fields'), child_item.get('itemType')):
+            conversions_detected = True
+            break
+
 
     # process all the children
     for child_item in children_items:
@@ -333,12 +378,17 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
             # we got a match on the value? lets "convert" it
             if is_folder_conversion_item(fields, item_type_id):
                 process_synced_items(item_id)
-                folder_id = convert_item(child_item, child_item_type, root_item_id)
+                folder_id = convert_item_to_folder(child_item, child_item_type, root_item_id)
                 item_id_to_child_map[folder_id] = item_id_to_child_map.get(item_id)
                 update_resync_list(item_id, folder_id)
                 item_id = folder_id
-                conversion_count += 1
-
+                folder_conversion_count += 1
+            elif is_text_conversion_item(fields, item_type_id):
+                process_synced_items(item_id)
+                text_id = convert_item_to_text(child_item, root_item_id)
+                item_id_to_child_map[text_id] = item_id_to_child_map.get(item_id)
+                update_resync_list(item_id, text_id)
+                text_conversion_count += 1
             # no? well we still need to do work here to maintain order
             else:
                 #  unless we don't care about order?
@@ -356,7 +406,7 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
 #   1. create a folder item with the same parent
 #   2. if there are children then move those over to the new folder item too.
 #   3. delete the original item
-def convert_item(item, child_item_type, parent_item_type_id):
+def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     item_id = item.get("id")
     folder_id = create_folder(item, child_item_type, parent_item_type_id)
     children = client.get_children_items(item_id)
@@ -369,8 +419,27 @@ def convert_item(item, child_item_type, parent_item_type_id):
     return folder_id
 
 
-#
-# def init_progress_bar():
+# this is the "convert" (those are dramatic air quotes) here is how we are going to convert this:
+#   1. create a text item with the same parent
+#   2. if there are children then move those over to the new folder item too.
+#   3. delete the original item
+def convert_item_to_text(item, parent_item_type_id):
+    item_id = item.get("id")
+    text_id = create_text(item, parent_item_type_id)
+    text_item_type_id = text_item_type.get('id')
+    children = client.get_children_items(item_id)
+    # we will need to iterate over all the children here, and move them to the new folder
+    for child in children:
+        child_item_type_id = child.get('itemType')
+        if child_item_type_id is text_item_type_id:
+            child_item_id = child.get("id")
+            move_item_to_parent_location(child_item_id, text_id)
+        else:
+            print('unable to move item ID:[' + str(child_item_id) + '] because this item is NOT of type text.' )
+
+    # there should be zero children in the original item now.
+    client.delete_item(item_id)
+    return text_id
 
 
 # recursively gets all the items and assigns them to a map, also gets the count
@@ -414,7 +483,7 @@ def get_fields_payload(fields):
     return payload
 
 
-# create a temp folder soo we can re-order the items. (API does not allow you to change the order)
+# create a folder item
 def create_folder(item, child_item_type, parent_item_id):
     fields = item.get('fields')
     fields = get_fields_payload(fields)
@@ -422,6 +491,18 @@ def create_folder(item, child_item_type, parent_item_id):
     folder_item_type_id = folder_item_type.get('id')
     location = {'item': parent_item_id}
     response = client.post_item(project, folder_item_type_id, child_item_type, location, fields)
+    return response
+
+
+
+# create a text item
+def create_text(item, parent_item_id):
+    fields = item.get('fields')
+    fields = get_fields_payload(fields)
+    project = item.get('project')
+    text_item_type_id = text_item_type.get('id')
+    location = {'item': parent_item_id}
+    response = client.post_item(project, text_item_type_id, text_item_type_id, location, fields)
     return response
 
 
@@ -497,6 +578,10 @@ if __name__ == '__main__':
     if not validate_parameters():
         sys.exit()
 
+    if not get_convert_folders() and not get_convert_texts():
+        print('Both convert folders and texts set to false. no work needed, aborting...')
+        sys.exit()
+
     # pull down all the meta data for this instance
     print('Retrieving Instance meta data...')
     get_meta_data()
@@ -557,5 +642,6 @@ if __name__ == '__main__':
     if get_stats_for_nerds():
         elapsed_time = '%.2f' % (time.time() - start)
         print('total execution time: ' + elapsed_time + ' seconds')
-        print('# items converted into folders: ' + str(conversion_count))
+        print('# items converted into folder(s): ' + str(folder_conversion_count))
+        print('# items converted into text(s): ' + str(text_conversion_count))
         print('# items re-indexed: ' + str(moved_item_count))
