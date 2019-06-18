@@ -418,7 +418,7 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     log('Detected item ID:[' + str(item_id) + '] converting this item to a FOLDER...', False)
     folder_id = create_folder(item, child_item_type, parent_item_type_id)
     if folder_id > 0:
-        log('Successfully converted item to type text', False)
+        log('Successfully converted item to type folder with new ID:[' + str(folder_id) + ' ]', False)
     children = client.get_children_items(item_id)
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
@@ -438,7 +438,7 @@ def convert_item_to_text(item, parent_item_type_id):
     log('Detected item ID:[' + str(item_id) + '] converting this item to a TEXT...', False)
     text_id = create_text(item, parent_item_type_id)
     if text_id > 0:
-        log('Successfully converted item to type text', False)
+        log('Successfully converted item to type text with new ID:[' + str(text_id) + ']', False)
     text_item_type_id = text_item_type.get('id')
     children = client.get_children_items(item_id)
     # we will need to iterate over all the children here, and move them to the new folder
