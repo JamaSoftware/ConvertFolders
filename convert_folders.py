@@ -345,7 +345,13 @@ def process_synced_items(item_id):
     # do we care about synced items?
     if get_resync_items():
         # lets check to see if there are any synced items on this.
-        synced_items = client.get_synced_items(item_id)
+        synced_items = []
+        try:
+            synced_items = client.get_synced_items(item_id)
+        except APIException as e:
+            # there are no items to sync here.
+            return
+
         if synced_items is not None and len(synced_items) > 0:
             # save these connections, because we are going to re-establish
             # these later in the script execution.
