@@ -624,11 +624,11 @@ if __name__ == '__main__':
         set_item = client.get_item(set_item_id)
 
         # show some data about how we just did
-        log('Processing Set <' + config['CREDENTIALS']['instance url'] + '/perspective.req#/containers/, False'
+        log('Processing Set <' + config['CREDENTIALS']['instance url'] + '/perspective.req#/containers/'
               + str(set_item_id)
               + '?projectId='
               + str(set_item.get('project'))
-              + '>')
+              + '>', False)
 
         # lets pull the entire hierarchy under this set
         log('Retrieving all children items from set id: [' + str(set_item_id) + '] ...', False)
