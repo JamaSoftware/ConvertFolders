@@ -392,6 +392,8 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
             if is_folder_conversion_item(fields, item_type_id):
                 process_synced_items(item_id)
                 folder_id = convert_item_to_folder(child_item, child_item_type, root_item_id)
+                if folder_id == -1:
+                    continue
                 item_id_to_child_map[folder_id] = item_id_to_child_map.get(item_id)
                 update_resync_list(item_id, folder_id)
                 item_id = folder_id
@@ -399,6 +401,8 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
             elif is_text_conversion_item(fields, item_type_id):
                 process_synced_items(item_id)
                 text_id = convert_item_to_text(child_item, root_item_id)
+                if text_id == -1:
+                    continue
                 item_id_to_child_map[text_id] = item_id_to_child_map.get(item_id)
                 update_resync_list(item_id, text_id)
                 text_conversion_count += 1
@@ -415,23 +419,47 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
         bar.next()
 
 
-# this is the "convert" (those are dramatic air quotes) here is how we are going to convert this:
+def validate_item_id(item_id):
+    try:
+        client.get_item(item_id)
+        # if we can pull this down via the api then we good.
+        return True
+    except APIException as e:
+        # else invalid
+        return False
+
+
+
+    # this is the "convert" (those are dramatic air quotes) here is how we are going to convert this:
 #   1. create a folder item with the same parent
 #   2. if there are children then move those over to the new folder item too.
 #   3. delete the original item
 def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     item_id = item.get("id")
+    # lets confirm this item id is valid before we continue.
+    if not validate_item_id(item_id):
+        return -1
+
     log('Detected item ID:[' + str(item_id) + '] converting this item to a FOLDER...', False)
     folder_id = create_folder(item, child_item_type, parent_item_type_id)
     if folder_id > 0:
-        log('Successfully converted item to type folder with new ID:[' + str(folder_id) + ' ]', False)
-    children = client.get_children_items(item_id)
+        log('Successfully converted item to type folder with new ID:[' + str(folder_id) + ']', False)
+    children = []
+    try:
+        children = client.get_children_items(item_id)
+    # this is likely caused from a bad resource id (item id)
+    except APIException as e:
+        log('Unable to get retrieve children for item ID:[' + item_id + ']... ' + str(e), True)
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
         child_item_id = child.get("id")
         move_item_to_parent_location(child_item_id, folder_id)
     # there should be zero children in the original item now.
-    client.delete_item(item_id)
+    try:
+        client.delete_item(item_id)
+    except APIException as e:
+        log('Unable to delete the original item ID:[' + item_id + ']... ' + str(e), True)
+
     return folder_id
 
 
@@ -441,12 +469,21 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
 #   3. delete the original item
 def convert_item_to_text(item, parent_item_type_id):
     item_id = item.get("id")
+    # lets confirm this item id is valid before we continue.
+    if not validate_item_id(item_id):
+        return -1
+
     log('Detected item ID:[' + str(item_id) + '] converting this item to a TEXT...', False)
     text_id = create_text(item, parent_item_type_id)
     if text_id > 0:
         log('Successfully converted item to type text with new ID:[' + str(text_id) + ']', False)
     text_item_type_id = text_item_type.get('id')
-    children = client.get_children_items(item_id)
+    children = []
+    try:
+        children = client.get_children_items(item_id)
+    # this is likely caused from a bad resource id (item id)
+    except APIException as e:
+        log('Unable to get retrieve children for item ID:[' + item_id + ']... ' + str(e), True)
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
         child_item_type_id = child.get('itemType')
@@ -457,7 +494,11 @@ def convert_item_to_text(item, parent_item_type_id):
             log('unable to move item ID:[' + str(child_item_id) + '] because this item is NOT of type text.', True)
 
     # there should be zero children in the original item now.
-    client.delete_item(item_id)
+    try:
+        client.delete_item(item_id)
+    except APIException as e:
+        log('Unable to delete the original item ID:[' + item_id + ']... ' + str(e), True)
+
     return text_id
 
 
