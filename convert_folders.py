@@ -334,7 +334,7 @@ def resync_items(bar):
         try:
             client.post_synced_item(synced_items[0], synced_items[1])
         except APIException as e:
-            log('unable to sync item ID:[' + synced_items[0] + '] to item ID:[' + synced_items[1] + ']\n' 
+            log('unable to sync item ID:[' + str(synced_items[0]) + '] to item ID:[' + str(synced_items[1]) + ']\n' 
                   'This is likely due to the item types not matching. Make sure need to include all the sets \n' +
                   'that are using reuse and sync.', True)
 
@@ -449,7 +449,7 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
         children = client.get_children_items(item_id)
     # this is likely caused from a bad resource id (item id)
     except APIException as e:
-        log('Unable to get retrieve children for item ID:[' + item_id + ']... ' + str(e), True)
+        log('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e), True)
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
         child_item_id = child.get("id")
@@ -458,7 +458,7 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     try:
         client.delete_item(item_id)
     except APIException as e:
-        log('Unable to delete the original item ID:[' + item_id + ']... ' + str(e), True)
+        log('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e), True)
 
     return folder_id
 
@@ -483,7 +483,7 @@ def convert_item_to_text(item, parent_item_type_id):
         children = client.get_children_items(item_id)
     # this is likely caused from a bad resource id (item id)
     except APIException as e:
-        log('Unable to get retrieve children for item ID:[' + item_id + ']... ' + str(e), True)
+        log('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e), True)
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
         child_item_type_id = child.get('itemType')
@@ -497,7 +497,7 @@ def convert_item_to_text(item, parent_item_type_id):
     try:
         client.delete_item(item_id)
     except APIException as e:
-        log('Unable to delete the original item ID:[' + item_id + ']... ' + str(e), True)
+        log('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e), True)
 
     return text_id
 
@@ -712,7 +712,7 @@ if __name__ == '__main__':
     # here are some fun stats for nerds
     if get_stats_for_nerds():
         elapsed_time = '%.2f' % (time.time() - start)
-        log('total execution time: ' + elapsed_time + ' seconds', False)
+        log('total execution time: ' + str(elapsed_time) + ' seconds', False)
         log('# items converted into folder(s): ' + str(folder_conversion_count), False)
         log('# items converted into text(s): ' + str(text_conversion_count), False)
         log('# items re-indexed: ' + str(moved_item_count), False)
