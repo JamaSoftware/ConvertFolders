@@ -312,57 +312,6 @@ def get_pick_list_option(pick_list_option_id):
         return pick_list_option
 
 
-def update_resync_list(old_id, new_id):
-    global synced_items_list
-    updated_synced_item_list = []
-    for synced_items in synced_items_list:
-
-        # the synced item list is a list of tuples. which are not mutable
-        # first entry
-        if synced_items[0] == old_id:
-            updated_synced_item_list.append((new_id, synced_items[1]))
-        elif synced_items[1] == old_id:
-            updated_synced_item_list.append((synced_items[0], new_id))
-        else:
-            updated_synced_item_list.append(synced_items)
-
-    synced_items_list = updated_synced_item_list
-
-
-def resync_items(bar):
-    for synced_items in synced_items_list:
-        try:
-            client.post_synced_item(synced_items[0], synced_items[1])
-        except APIException as e:
-            log('unable to sync item ID:[' + str(synced_items[0]) + '] to item ID:[' + str(synced_items[1]) + ']\n' 
-                  'This is likely due to the item types not matching. Make sure need to include all the sets \n' +
-                  'that are using reuse and sync.', True)
-
-        bar.next()
-
-
-def process_synced_items(item_id):
-    # do we care about synced items?
-    if get_resync_items():
-        # lets check to see if there are any synced items on this.
-        synced_items = []
-        try:
-            synced_items = client.get_synced_items(item_id)
-        except APIException as e:
-            # there are no items to sync here.
-            return
-
-        if synced_items is not None and len(synced_items) > 0:
-            # save these connections, because we are going to re-establish
-            # these later in the script execution.
-            for synced_item in synced_items:
-                synced_item_id = synced_item.get('id')
-                in_list_one = (item_id, synced_item_id) in synced_items_list
-                in_list_two = (synced_item_id, item_id) in synced_items_list
-                if not in_list_one and not in_list_two:
-                    synced_items_list.append((item_id, synced_item_id))
-
-
 def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
     # children_items = client.get_children_items(root_item_id)
     global moved_item_count, folder_conversion_count, text_conversion_count, synced_items_list
@@ -390,21 +339,21 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
 
             # we got a match on the value? lets "convert" it
             if is_folder_conversion_item(fields, item_type_id):
-                process_synced_items(item_id)
+                # process_synced_items(item_id)
                 folder_id = convert_item_to_folder(child_item, child_item_type, root_item_id)
                 if folder_id == -1:
                     continue
                 item_id_to_child_map[folder_id] = item_id_to_child_map.get(item_id)
-                update_resync_list(item_id, folder_id)
+                # update_resync_list(item_id, folder_id)
                 item_id = folder_id
                 folder_conversion_count += 1
             elif is_text_conversion_item(fields, item_type_id):
-                process_synced_items(item_id)
+                # process_synced_items(item_id)
                 text_id = convert_item_to_text(child_item, root_item_id)
                 if text_id == -1:
                     continue
                 item_id_to_child_map[text_id] = item_id_to_child_map.get(item_id)
-                update_resync_list(item_id, text_id)
+                # update_resync_list(item_id, text_id)
                 text_conversion_count += 1
             # no? well we still need to do work here to maintain order
             else:
@@ -550,8 +499,12 @@ def create_folder(item, child_item_type, parent_item_id):
     project = item.get('project')
     folder_item_type_id = folder_item_type.get('id')
     location = {'item': parent_item_id}
+    global_id = None
+    # we resyncing items?
+    if get_resync_items():
+        global_id = 'FOLDER-' + item.get('globalId')
     try:
-        response = client.post_item(project, folder_item_type_id, child_item_type, location, fields)
+        response = client.post_item(project, folder_item_type_id, child_item_type, location, fields, global_id)
     except APIException as e:
         log('Failed to convert item to folder. Exception: ' + str(e) + '\n'
             'item:' + str(item) + '\n' +
@@ -567,8 +520,12 @@ def create_text(item, parent_item_id):
     project = item.get('project')
     text_item_type_id = text_item_type.get('id')
     location = {'item': parent_item_id}
+    global_id = None
+    # we resyncing items?
+    if get_resync_items():
+        global_id = 'TEXT-' + item.get('globalId')
     try:
-        response = client.post_item(project, text_item_type_id, text_item_type_id, location, fields)
+        response = client.post_item(project, text_item_type_id, text_item_type_id, location, fields, global_id)
     except APIException as e:
         log('Failed to convert item to text. Exception: ' + str(e) + '\n'
             'item:' + str(item) + '\n' +
@@ -584,7 +541,7 @@ def create_temp_folder(root_set_item_id, child_item_type_id):
     folder_item_type_id = folder_item_type.get('id')
     location = {'item': set_item_id}
     fields = {"name": "TEMP"}
-    response = client.post_item(project, folder_item_type_id, child_item_type_id, location, fields)
+    response = client.post_item(project, folder_item_type_id, child_item_type_id, location, fields, None)
     return response
 
 
@@ -700,12 +657,6 @@ if __name__ == '__main__':
         client.delete_item(temp_folder_id)
         log('Finished processing set id: [' + str(set_item_id) + ']\n', False)
         reset_set_item_variables()
-
-    # do we care about reuse and sync?
-    if get_resync_items() and len(synced_items_list) > 0:
-        with ChargingBar('ReSyncing Converted Folders', max=len(synced_items_list), suffix='%(percent).1f%% - %(eta)ds') as bar:
-            resync_items(bar)
-            bar.finish()
 
     log('\nScript execution finished', False)
 
