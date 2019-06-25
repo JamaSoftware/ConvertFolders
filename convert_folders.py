@@ -11,7 +11,7 @@ from py_jama_rest_client.client import JamaClient, APIException
 global config
 global client
 
-# global variables these reset after each set root item is processed
+# global variables these reset after each set root item is processed this is redundant
 global folder_item_type
 global text_item_type
 global set_item_type
@@ -35,6 +35,8 @@ folder_conversion_count = 0
 text_conversion_count = 0
 moved_item_count = 0
 
+# variable
+MAX_RETRIES = 3
 
 
 def init_globals():
@@ -555,7 +557,16 @@ def move_item_to_parent_location(item_id, destination_parent_id):
             "value": destination_parent_id
         }
     ]
-    client.patch_item(item_id, payload)
+    retry_counter = 0
+    while retry_counter < MAX_RETRIES:
+        try:
+            client.patch_item(item_id, payload)
+            return
+        except APIException as e:
+            log('Unable to move item ID:[' + str(item_id) + '] :: ' + str(e), True)
+            retry_counter += 1
+            time.sleep(retry_counter * retry_counter)
+    log('Failed all ' + str(MAX_RETRIES) + ' attempts to move item ID:[' + str(item_id) + ']', True)
 
 
 def get_child_item_type(item_id):
