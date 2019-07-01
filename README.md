@@ -1,5 +1,5 @@
 # ConvertFolders
-Script that interacts with Jama's API to "convert" items into folders. 
+Script that interacts with Jama's API to "convert" items into folders and texts. 
 
 ### Script Dependencies
 - python 3
