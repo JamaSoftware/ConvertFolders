@@ -670,7 +670,7 @@ if __name__ == '__main__':
 
     log(str(set_item_ids) + ' sets being processed, each set will be processed sequentially. \n', False)
     # loop through the list of set item ids
-    for set_item_id in set_item_ids::""
+    for set_item_id in set_item_ids:
         set_item = client.get_item(set_item_id)
 
         # show some data about how we just did
