@@ -1,4 +1,4 @@
-# ConvertFolders
+# Folder Text Converter
 Script that interacts with Jama's API to "convert" items into folders and texts. 
 
 ### Script Dependencies
