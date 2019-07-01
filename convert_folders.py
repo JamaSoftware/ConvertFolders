@@ -98,28 +98,40 @@ def log(message, is_error):
     else:
         logging.info(message)
 
+
 def validate_parameters():
     set_ids_string = config['PARAMETERS']['set item ids']
-    folder_api_field_name = config['PARAMETERS']['folder api field name']
-    folder_field_value = config['PARAMETERS']['folder field value']
-    text_api_field_name = config['PARAMETERS']['text api field name']
-    text_field_value = config['PARAMETERS']['text field value']
+    folder_api_field_names = config['PARAMETERS']['folder api field names']
+    folder_field_values = config['PARAMETERS']['folder field values']
+    text_api_field_names = config['PARAMETERS']['text api field names']
+    text_field_values = config['PARAMETERS']['text field values']
 
+    # we need at least one set ot process here
     if set_ids_string is None or set_ids_string == '':
         log("A value for the 'set item ids' parameter in config file must be provided", True)
         return False
-    if folder_api_field_name is None or folder_api_field_name == '':
-        log("A value for the 'folder api field name' parameter in config file must be provided", True)
-        return False
-    if folder_field_value is None or folder_field_value == '':
-        log("A value for the 'folder field value' parameter in config file must be provided", True)
-        return False
-    if text_api_field_name is None or text_api_field_name == '':
-        log("A value for the 'text api field name' parameter in config file must be provided", True)
-        return False
-    if text_field_value is None or text_field_value == '':
-        log("A value for the 'text field value' parameter in config file must be provided", True)
-        return False
+
+    #  we converting items into folders? we are going to need the these params.
+    if get_convert_folders():
+        if folder_api_field_names is None or folder_api_field_names == '':
+            log("A value for the 'folder api field names' parameter in config file must be provided", True)
+            return False
+        if folder_field_values is None or folder_field_values == '':
+            log("A value for the 'folder field values' parameter in config file must be provided", True)
+            return False
+        if len(folder_api_field_names) == len(folder_field_values):
+            log("There must be a corresponding 'folder field value' for every 'folder api field name'", True)
+
+    #  we converting items into texts? we are going to need the these params.
+    if get_convert_texts():
+        if text_api_field_names is None or text_api_field_names == '':
+            log("A value for the 'text api field names' parameter in config file must be provided", True)
+            return False
+        if text_field_values is None or text_field_values == '':
+            log("A value for the 'text field values' parameter in config file must be provided", True)
+            return False
+        if len(text_api_field_names) == len(text_field_values):
+            log("There must be a corresponding 'text field value' for every 'text api field name'", True)
 
     return True
 
@@ -179,10 +191,27 @@ def get_set_ids():
     return return_list
 
 
-def validate_config():
+def get_conversion_field_names(field_type):
+    set_ids_string = config['PARAMETERS'][field_type + ' api field names']
+    split_ids = set_ids_string.split(',')
+    return_list = []
+    for split_id in split_ids:
+        return_list.append(split_id.strip())
+    return return_list
+
+
+def get_conversion_field_values(field_type):
+    set_ids_string = config['PARAMETERS'][field_type + ' field values']
+    split_ids = set_ids_string.split(',')
+    return_list = []
+    for split_id in split_ids:
+        return_list.append(split_id.strip())
+    return return_list
+
+
+def validate_credentials():
     # both credentials and parameters are required
     credentials = ['instance url', 'using oauth', 'username', 'password']
-    parameters = ['set item ids', 'folder api field name', 'folder field value']
     # these are optional
     options = ['preserve order', 'stats for nerds', 'create snapshot']
 
@@ -192,12 +221,6 @@ def validate_config():
             log("Config missing required credential '" + credential
                   + "', confirm this is present in the config.ini file.", True)
             return False
-    for parameter in parameters:
-        if parameter not in config['PARAMETERS']:
-            log("Config missing required parameter '" + parameter
-                  + "', confirm this is present in the config.ini file.", True)
-            return False
-
     return True
 
 
@@ -214,7 +237,10 @@ def validate_user_credentials(client):
 # this script will only work if the root set its are actually of type set
 def validate_set_item_ids(item_ids):
     for item_id in item_ids:
-        current_item = client.get_item(item_id)
+        try:
+            current_item = client.get_item(item_id)
+        except APIException as e:
+            return False
         if current_item.get('itemType') != set_item_type.get('id'):
             return False
     return True
@@ -269,39 +295,53 @@ def is_conversion_item(fields, item_type_id, type_string):
     key = None
     value = None
 
-    api_field_name = str(config['PARAMETERS'][type_string + ' api field name'])
-    field_value = str(config['PARAMETERS'][type_string + ' field value'])
+    field_names = get_conversion_field_names(type_string)
+    field_values = get_conversion_field_values(type_string)
 
-    # determine what key were working with here. custom fields will be fieldName $ itemTypeID
-    if api_field_name in fields:
-        key = api_field_name
-    elif api_field_name + '$' + str(item_type_id) in fields:
-        key = api_field_name + '$' + str(item_type_id)
-    else:
-        return False
+    # api_field_name = str(config['PARAMETERS'][type_string + ' api field name'])
+    # field_value = str(config['PARAMETERS'][type_string + ' field value'])
 
-    # grab the field value
-    value = fields.get(key)
+    for index in range(len(field_names)):
+        field_name = field_names[index]
+        field_value = field_values[index]
 
-    # iterate over all the field definitions here to find a match on the field were working with here
-    # the point of doing this is to determine the field type. if look up -> do more work.
-    for field_definition in field_definitions:
-        field_definitions_name = field_definition.get('name')
-        # found it!, lets look and see what were working with here.
-        if field_definitions_name == key:
-            # is this a lookup of type picklist?
-            if field_definition.get('fieldType') == 'LOOKUP' and 'pickList' in field_definition:
+        # determine what key were working with here. custom fields will be fieldName $ itemTypeID
+        # for field_name in field_names:
+        api_field_name = str(field_name)
+        if api_field_name in fields:
+            key = api_field_name
+        elif api_field_name + '$' + str(item_type_id) in fields:
+            key = api_field_name + '$' + str(item_type_id)
 
-                # we have a match on the id?
-                if field_value == value:
-                    return True
+        # no key? then give up now.
+        if key is None:
+            continue
 
-                # dive deeper, grab the picklist option here.
-                pick_list_option = get_pick_list_option(value)
-                return field_value == pick_list_option.get("name")
-            # else lets just assume this is a string were matching up.
-            else:
-                return field_value == value
+        # grab the field value
+        value = fields.get(key)
+
+        # iterate over all the field definitions here to find a match on the field were working with here
+        # the point of doing this is to determine the field type. if look up -> do more work.
+        for field_definition in field_definitions:
+            field_definitions_name = field_definition.get('name')
+            # found it!, lets look and see what were working with here.
+            if field_definitions_name == key:
+                # is this a lookup of type picklist?
+                if field_definition.get('fieldType') == 'LOOKUP' and 'pickList' in field_definition:
+
+                    # we have a match on the id?
+                    if field_value == value:
+                        return True
+
+                    # dive deeper, resolve the lookup id to a value and check that.
+                    pick_list_option = get_pick_list_option(value)
+                    if field_value == pick_list_option.get("name"):
+                        return True
+                # else lets just assume this is a string were matching up.
+                else:
+                    if field_value == value:
+                        return True
+    return False
 
 
 def get_pick_list_option(pick_list_option_id):
@@ -329,7 +369,6 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
             conversions_detected = True
             break
 
-
     # process all the children
     for child_item in children_items:
         item_type_id = child_item.get('itemType')
@@ -341,21 +380,17 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
 
             # we got a match on the value? lets "convert" it
             if is_folder_conversion_item(fields, item_type_id):
-                # process_synced_items(item_id)
                 folder_id = convert_item_to_folder(child_item, child_item_type, root_item_id)
                 if folder_id == -1:
                     continue
                 item_id_to_child_map[folder_id] = item_id_to_child_map.get(item_id)
-                # update_resync_list(item_id, folder_id)
                 item_id = folder_id
                 folder_conversion_count += 1
             elif is_text_conversion_item(fields, item_type_id):
-                # process_synced_items(item_id)
                 text_id = convert_item_to_text(child_item, root_item_id)
                 if text_id == -1:
                     continue
                 item_id_to_child_map[text_id] = item_id_to_child_map.get(item_id)
-                # update_resync_list(item_id, text_id)
                 text_conversion_count += 1
             # no? well we still need to do work here to maintain order
             else:
@@ -380,8 +415,7 @@ def validate_item_id(item_id):
         return False
 
 
-
-    # this is the "convert" (those are dramatic air quotes) here is how we are going to convert this:
+# this is the "convert" (those are dramatic air quotes) here is how we are going to convert this:
 #   1. create a folder item with the same parent
 #   2. if there are children then move those over to the new folder item too.
 #   3. delete the original item
@@ -599,7 +633,7 @@ if __name__ == '__main__':
     config.read('config.ini')
 
     # read in the configuration, will abort script if missing requried params
-    if not validate_config():
+    if not validate_credentials():
         sys.exit()
 
     client = init_jama_client()
@@ -615,6 +649,7 @@ if __name__ == '__main__':
     set_item_ids = get_set_ids()
 
     if not validate_parameters():
+        log('Please verify that your config.ini parameters are correct and try again.', True)
         sys.exit()
 
     if not get_convert_folders() and not get_convert_texts():
@@ -628,14 +663,14 @@ if __name__ == '__main__':
 
     # lets validate the user specified set item ids. this script will only work with sets
     if not validate_set_item_ids(set_item_ids):
-        log('Invalid set id(s), please confirm that these ids are valid and of type set.', True)
+        log('Invalid set ID(s), please confirm that these IDs are valid and of type set.', True)
         sys.exit()
     else:
-        log('Specified Set IDs ' + str(set_item_ids) + ' are valid', False)
+        log('Specified Set ID(s) ' + str(set_item_ids) + ' are valid', False)
 
     log(str(set_item_ids) + ' sets being processed, each set will be processed sequentially. \n', False)
     # loop through the list of set item ids
-    for set_item_id in set_item_ids:
+    for set_item_id in set_item_ids::""
         set_item = client.get_item(set_item_id)
 
         # show some data about how we just did
