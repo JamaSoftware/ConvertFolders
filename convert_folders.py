@@ -229,7 +229,11 @@ def validate_credentials():
 
 # lets validate the user credentials
 def validate_user_credentials(client):
-    endpoints = client.get_available_endpoints()
+    try:
+        endpoints = client.get_available_endpoints()
+    except APIException as e:
+        logger.error('Unable to connect to instance... Exception:' + str(e))
+        return False
     if endpoints is None or len(endpoints) < 1:
         return False
     # if we have made it this far then were good
@@ -242,6 +246,7 @@ def validate_set_item_ids(item_ids):
         try:
             current_item = client.get_item(item_id)
         except APIException as e:
+            logger.error("unable to validate the set item ids. Exception: " + str(e))
             return False
         if current_item.get('itemType') != set_item_type.get('id'):
             return False
@@ -257,7 +262,11 @@ def get_meta_data():
     global pick_list_option_map
 
     # lets collect all the instance meta data were going to need before we run the conversions
-    item_types = client.get_item_types()
+    try:
+        item_types = client.get_item_types()
+    except APIException as e:
+        logger.error('Unable to retrieve item type data. Exception: ' + str(e))
+        return False
     for item_type in item_types:
         # grab the type key, this *should* be consistent across Jama connect instances
         type_key = item_type.get('typeKey')
@@ -270,6 +279,7 @@ def get_meta_data():
             set_item_type = item_type
 
         item_type_map[item_type_id] = item_type
+    return True
 
 
 def is_folder_conversion_item(fields, item_type_id):
@@ -351,13 +361,16 @@ def get_pick_list_option(pick_list_option_id):
     if pick_list_option_id in pick_list_option_map:
         return pick_list_option_map.get(pick_list_option_id)
     else:
-        pick_list_option = client.get_pick_list_option(pick_list_option_id)
+        try:
+            pick_list_option = client.get_pick_list_option(pick_list_option_id)
+        except APIException as e:
+            logger.error('Unable to retrieve picklist options for picklist ID:[' + str(pick_list_option_id) + ']. Exception: ' + str(e))
+            return None
         pick_list_option_map[pick_list_option_id] = pick_list_option
         return pick_list_option
 
 
 def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
-    # children_items = client.get_children_items(root_item_id)
     global moved_item_count, folder_conversion_count, text_conversion_count, synced_items_list
     children_items = item_id_to_child_map.get(root_item_id)
 
@@ -493,7 +506,11 @@ def convert_item_to_text(item, parent_item_type_id):
 def retrieve_items(root_item_id):
     global item_count
     global items_list
-    children = client.get_children_items(root_item_id)
+    try:
+        children = client.get_item_children(root_item_id)
+    except APIException as e:
+        logger.error('unable to retrieve child items for item ID:[' + str(root_item_id) + ']. Exception: ' + str(e))
+        return None
     items_list += children
     item_count += len(children)
     item_id_to_child_map[root_item_id] = children
@@ -579,7 +596,11 @@ def create_temp_folder(root_set_item_id, child_item_type_id):
     folder_item_type_id = folder_item_type.get('id')
     location = {'item': set_item_id}
     fields = {"name": "TEMP"}
-    response = client.post_item(project, folder_item_type_id, child_item_type_id, location, fields, None)
+    try:
+        response = client.post_item(project, folder_item_type_id, child_item_type_id, location, fields, None)
+    except APIException as e:
+        logger.error('Unable to create a temporary folder for reindexing items. Exception e: ' + str(e))
+        return None
     return response
 
 
@@ -660,7 +681,9 @@ if __name__ == '__main__':
 
     # pull down all the meta data for this instance
     logger.info('Retrieving Instance meta data...')
-    get_meta_data()
+    if not get_meta_data():
+        logger.error('Unable to retrieve instance meta data')
+        sys.exit()
     logger.info('Successfully retrieved ' + str(len(item_type_map)) + ' item type definitions.')
 
     # lets validate the user specified set item ids. this script will only work with sets
@@ -673,7 +696,12 @@ if __name__ == '__main__':
     logger.info(str(set_item_ids) + ' sets being processed, each set will be processed sequentially. \n')
     # loop through the list of set item ids
     for set_item_id in set_item_ids:
-        set_item = client.get_item(set_item_id)
+        try:
+            set_item = client.get_item(set_item_id)
+        except APIException as e:
+            logger.error('Unable to identify set item ID:[' + str(set_item_id) + '] Exception: ' + str(e))
+            logger.error('skipping processing this set...')
+            continue
 
         # show some data about how we just did
         logger.info('Processing Set <' + config['CREDENTIALS']['instance url'] + '/perspective.req#/containers/'
@@ -693,13 +721,20 @@ if __name__ == '__main__':
         child_item_type = get_child_item_type(set_item_id)
         # create a temp folder
         temp_folder_id = create_temp_folder(set_item_id, child_item_type)
+        if temp_folder_id is None:
+            logger.error("skipping processing this set...")
+            continue
 
         if item_count > 0:
             with ChargingBar('Processing Items', max=item_count, suffix='%(percent).1f%% - %(eta)ds') as bar:
                 process_children_items(set_item_id, temp_folder_id, child_item_type, bar)
                 bar.finish()
 
-        client.delete_item(temp_folder_id)
+        try:
+            client.delete_item(temp_folder_id)
+        except APIException as e:
+            logger.error('Unable to delete temp folder with ID:['+ str(temp_folder_id) + '] Exception: ' + str(e))
+
         logger.info('Finished processing set id: [' + str(set_item_id) + ']\n')
         reset_set_item_variables()
 
