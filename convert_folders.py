@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 import datetime
@@ -81,22 +82,24 @@ def init_jama_client():
     return JamaClient(instance_url, credentials=(username, password), oauth=using_oauth)
 
 
-def init_logging():
-    # Get current date and time for the log file name
-    timestamp = datetime.datetime.now()
-    # Lets make the datetime pretty
-    pretty_timestamp = timestamp.strftime('%Y-%m-%d_%H-%M-%S')
-    # Setup log file name
-    logfile = 'conversion-logs__' + pretty_timestamp + '.log'
-    logging.basicConfig(filename=logfile, level=logging.INFO)
+def init_logger():
+    # Setup logging
+    try:
+        os.makedirs('logs')
+    except FileExistsError:
+        pass
 
+    current_date_time = datetime.datetime.now().strftime('%m-%d-%Y_%H-%M-%S')
+    log_file = 'logs/' + str(current_date_time) + '.log'
 
-def log(message, is_error):
-    print(message)
-    if is_error:
-        logging.error(message)
-    else:
-        logging.info(message)
+    logging.basicConfig(filename=log_file, level=logging.INFO,
+                        format='%(asctime)s - %(levelname)s - %(message)s',
+                        datefmt='%H:%M:%S')
+
+    logger = logging.getLogger()
+    logger.addHandler(logging.StreamHandler(sys.stdout))
+    return logger
+
 
 
 def validate_parameters():
@@ -108,30 +111,30 @@ def validate_parameters():
 
     # we need at least one set ot process here
     if set_ids_string is None or set_ids_string == '':
-        log("A value for the 'set item ids' parameter in config file must be provided", True)
+        logger.error("A value for the 'set item ids' parameter in config file must be provided")
         return False
 
     #  we converting items into folders? we are going to need the these params.
     if get_convert_folders():
         if folder_api_field_names is None or folder_api_field_names == '':
-            log("A value for the 'folder api field names' parameter in config file must be provided", True)
+            logger.error("A value for the 'folder api field names' parameter in config file must be provided")
             return False
         if folder_field_values is None or folder_field_values == '':
-            log("A value for the 'folder field values' parameter in config file must be provided", True)
+            logger.error("A value for the 'folder field values' parameter in config file must be provided")
             return False
         if len(folder_api_field_names) == len(folder_field_values):
-            log("There must be a corresponding 'folder field value' for every 'folder api field name'", True)
+            logger.error("There must be a corresponding 'folder field value' for every 'folder api field name'")
 
     #  we converting items into texts? we are going to need the these params.
     if get_convert_texts():
         if text_api_field_names is None or text_api_field_names == '':
-            log("A value for the 'text api field names' parameter in config file must be provided", True)
+            logger.error("A value for the 'text api field names' parameter in config file must be provided")
             return False
         if text_field_values is None or text_field_values == '':
-            log("A value for the 'text field values' parameter in config file must be provided", True)
+            logger.error("A value for the 'text field values' parameter in config file must be provided")
             return False
         if len(text_api_field_names) == len(text_field_values):
-            log("There must be a corresponding 'text field value' for every 'text api field name'", True)
+            logger.error("There must be a corresponding 'text field value' for every 'text api field name'")
 
     return True
 
@@ -218,17 +221,16 @@ def validate_credentials():
     # lets run some quick validations here
     for credential in credentials:
         if credential not in config['CREDENTIALS']:
-            log("Config missing required credential '" + credential
-                  + "', confirm this is present in the config.ini file.", True)
+            logger.error("Config missing required credential '" + credential
+                  + "', confirm this is present in the config.ini file.")
             return False
     return True
 
 
 # lets validate the user credentials
 def validate_user_credentials(client):
-    response = client.get_server_response()
-    status_code = response.status_code
-    if status_code != 200:
+    endpoints = client.get_available_endpoints()
+    if endpoints is None or len(endpoints) < 1:
         return False
     # if we have made it this far then were good
     return True
@@ -425,16 +427,16 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     if not validate_item_id(item_id):
         return -1
 
-    log('Detected item ID:[' + str(item_id) + '] converting this item to a FOLDER...', False)
+    logger.info('Detected item ID:[' + str(item_id) + '] converting this item to a FOLDER...')
     folder_id = create_folder(item, child_item_type, parent_item_type_id)
     if folder_id > 0:
-        log('Successfully converted item to type folder with new ID:[' + str(folder_id) + ']', False)
+        logger.info('Successfully converted item to type folder with new ID:[' + str(folder_id) + ']')
     children = []
     try:
         children = client.get_children_items(item_id)
     # this is likely caused from a bad resource id (item id)
     except APIException as e:
-        log('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e), True)
+        logger.error('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e))
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
         child_item_id = child.get("id")
@@ -443,7 +445,7 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     try:
         client.delete_item(item_id)
     except APIException as e:
-        log('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e), True)
+        logger.error('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e))
 
     return folder_id
 
@@ -458,17 +460,17 @@ def convert_item_to_text(item, parent_item_type_id):
     if not validate_item_id(item_id):
         return -1
 
-    log('Detected item ID:[' + str(item_id) + '] converting this item to a TEXT...', False)
+    logger.info('Detected item ID:[' + str(item_id) + '] converting this item to a TEXT...')
     text_id = create_text(item, parent_item_type_id)
     if text_id > 0:
-        log('Successfully converted item to type text with new ID:[' + str(text_id) + ']', False)
+        logger.info('Successfully converted item to type text with new ID:[' + str(text_id) + ']')
     text_item_type_id = text_item_type.get('id')
     children = []
     try:
         children = client.get_children_items(item_id)
     # this is likely caused from a bad resource id (item id)
     except APIException as e:
-        log('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e), True)
+        logger.error('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e))
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
         child_item_type_id = child.get('itemType')
@@ -476,13 +478,13 @@ def convert_item_to_text(item, parent_item_type_id):
             child_item_id = child.get("id")
             move_item_to_parent_location(child_item_id, text_id)
         else:
-            log('unable to move item ID:[' + str(child_item_id) + '] because this item is NOT of type text.', True)
+            logger.error('unable to move item ID:[' + str(child_item_id) + '] because this item is NOT of type text.')
 
     # there should be zero children in the original item now.
     try:
         client.delete_item(item_id)
     except APIException as e:
-        log('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e), True)
+        logger.error('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e))
 
     return text_id
 
@@ -542,9 +544,9 @@ def create_folder(item, child_item_type, parent_item_id):
     try:
         response = client.post_item(project, folder_item_type_id, child_item_type, location, fields, global_id)
     except APIException as e:
-        log('Failed to convert item to folder. Exception: ' + str(e) + '\n'
+        logger.error('Failed to convert item to folder. Exception: ' + str(e) + '\n'
             'item:' + str(item) + '\n' +
-            'parent item ID:' + str(parent_item_id), True)
+            'parent item ID:' + str(parent_item_id))
         return -1
     return response
 
@@ -563,9 +565,9 @@ def create_text(item, parent_item_id):
     try:
         response = client.post_item(project, text_item_type_id, text_item_type_id, location, fields, global_id)
     except APIException as e:
-        log('Failed to convert item to text. Exception: ' + str(e) + '\n'
+        logger.error('Failed to convert item to text. Exception: ' + str(e) + '\n'
             'item:' + str(item) + '\n' +
-            'parent item ID:' + str(parent_item_id), True)
+            'parent item ID:' + str(parent_item_id))
         return -1
     return response
 
@@ -597,10 +599,10 @@ def move_item_to_parent_location(item_id, destination_parent_id):
             client.patch_item(item_id, payload)
             return
         except APIException as e:
-            log('Unable to move item ID:[' + str(item_id) + '] :: ' + str(e), True)
+            logger('Unable to move item ID:[' + str(item_id) + '] :: ' + str(e), True)
             retry_counter += 1
             time.sleep(retry_counter * retry_counter)
-    log('Failed all ' + str(MAX_RETRIES) + ' attempts to move item ID:[' + str(item_id) + ']', True)
+    logger('Failed all ' + str(MAX_RETRIES) + ' attempts to move item ID:[' + str(item_id) + ']', True)
 
 
 def get_child_item_type(item_id):
@@ -619,15 +621,15 @@ def create_snapshot(set_id):
 if __name__ == '__main__':
     global config
     global client
+    logger = init_logger()
     start = time.time()
     init_globals()
-    init_logging()
-    log('\n'
+    logger.info('\n'
           + '     ____     __   __          _____                      __           \n'
           + '    / __/__  / /__/ /__ ____  / ___/__  ___ _  _____ ____/ /____  ____ \n'
           + '   / _// _ \/ / _  / -_) __/ / /__/ _ \/ _ \ |/ / -_) __/ __/ _ \/ __/ \n'
           + '  /_/  \___/_/\_,_/\__/_/    \___/\___/_//_/___/\__/_/  \__/\___/_/    \n'
-          + '                               Jama Software - Professional Services   \n', False)
+          + '                               Jama Software - Professional Services   \n')
 
     config = configparser.ConfigParser()
     config.read('config.ini')
@@ -636,58 +638,55 @@ if __name__ == '__main__':
     if not validate_credentials():
         sys.exit()
 
-    client = init_jama_client()
+    client  = init_jama_client()
 
     # validate user data
     if not validate_user_credentials(client):
-        log('Invalid username and/or password, please check your credentials and try again.', True)
+        logger.error('Invalid username and/or password, please check your credentials and try again.')
         sys.exit()
     else:
-        log('Connected to <' + config['CREDENTIALS']['instance url'] + '>', False)
+        logger.info('Connected to <' + config['CREDENTIALS']['instance url'] + '>')
 
     # validate all the parameters for this script
     set_item_ids = get_set_ids()
 
     if not validate_parameters():
-        log('Please verify that your config.ini parameters are correct and try again.', True)
+        logger.error('Please verify that your config.ini parameters are correct and try again.')
         sys.exit()
 
     if not get_convert_folders() and not get_convert_texts():
-        log('Both convert folders and texts set to false. no work needed, aborting...', True)
+        logger.info('Both convert folders and texts set to false. no work needed, aborting...')
         sys.exit()
 
     # pull down all the meta data for this instance
-    log('Retrieving Instance meta data...', False)
+    logger.info('Retrieving Instance meta data...')
     get_meta_data()
-    log('Successfully retrieved ' + str(len(item_type_map)) + ' item type definitions.', False)
+    logger.info('Successfully retrieved ' + str(len(item_type_map)) + ' item type definitions.')
 
     # lets validate the user specified set item ids. this script will only work with sets
     if not validate_set_item_ids(set_item_ids):
-        log('Invalid set ID(s), please confirm that these IDs are valid and of type set.', True)
+        logger.error('Invalid set ID(s), please confirm that these IDs are valid and of type set.')
         sys.exit()
     else:
-        log('Specified Set ID(s) ' + str(set_item_ids) + ' are valid', False)
+        logger.info('Specified Set ID(s) ' + str(set_item_ids) + ' are valid')
 
-    log(str(set_item_ids) + ' sets being processed, each set will be processed sequentially. \n', False)
+    logger.info(str(set_item_ids) + ' sets being processed, each set will be processed sequentially. \n')
     # loop through the list of set item ids
     for set_item_id in set_item_ids:
         set_item = client.get_item(set_item_id)
 
         # show some data about how we just did
-        log('Processing Set <' + config['CREDENTIALS']['instance url'] + '/perspective.req#/containers/'
-              + str(set_item_id)
-              + '?projectId='
-              + str(set_item.get('project'))
-              + '>', False)
+        logger.info('Processing Set <' + config['CREDENTIALS']['instance url'] + '/perspective.req#/containers/'
+              + str(set_item_id) + '?projectId=' + str(set_item.get('project')) + '>')
 
         # lets pull the entire hierarchy under this set
-        log('Retrieving all children items from set id: [' + str(set_item_id) + '] ...', False)
+        logger.info('Retrieving all children items from set id: [' + str(set_item_id) + '] ...')
         retrieve_items(set_item_id)
-        log('Successfully retrieved ' + str(item_count) + ' items.', False)
+        logger.info('Successfully retrieved ' + str(item_count) + ' items.')
 
         # create a backup of the data
         if get_create_snapshot():
-            log('Saving current state of item in set [' + str(set_item_id) + '] to json file.', False)
+            logger.info('Saving current state of item in set [' + str(set_item_id) + '] to json file.')
             create_snapshot(set_item_id)
 
         # get the child item type form the root set
@@ -701,15 +700,15 @@ if __name__ == '__main__':
                 bar.finish()
 
         client.delete_item(temp_folder_id)
-        log('Finished processing set id: [' + str(set_item_id) + ']\n', False)
+        logger.info('Finished processing set id: [' + str(set_item_id) + ']\n')
         reset_set_item_variables()
 
-    log('\nScript execution finished', False)
+    logger.info('\nScript execution finished')
 
     # here are some fun stats for nerds
     if get_stats_for_nerds():
         elapsed_time = '%.2f' % (time.time() - start)
-        log('total execution time: ' + str(elapsed_time) + ' seconds', False)
-        log('# items converted into folder(s): ' + str(folder_conversion_count), False)
-        log('# items converted into text(s): ' + str(text_conversion_count), False)
-        log('# items re-indexed: ' + str(moved_item_count), False)
+        logger.error('total execution time: ' + str(elapsed_time) + ' seconds')
+        logger.error('# items converted into folder(s): ' + str(folder_conversion_count))
+        logger.error('# items converted into text(s): ' + str(text_conversion_count))
+        logger.error('# items re-indexed: ' + str(moved_item_count))
