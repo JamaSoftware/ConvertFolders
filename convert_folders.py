@@ -446,7 +446,7 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
         logger.info('Successfully converted item to type folder with new ID:[' + str(folder_id) + ']')
     children = []
     try:
-        children = client.get_children_items(item_id)
+        children = client.get_item_children(item_id)
     # this is likely caused from a bad resource id (item id)
     except APIException as e:
         logger.error('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e))
@@ -480,7 +480,7 @@ def convert_item_to_text(item, parent_item_type_id):
     text_item_type_id = text_item_type.get('id')
     children = []
     try:
-        children = client.get_children_items(item_id)
+        children = client.get_item_children(item_id)
     # this is likely caused from a bad resource id (item id)
     except APIException as e:
         logger.error('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e))
@@ -620,10 +620,10 @@ def move_item_to_parent_location(item_id, destination_parent_id):
             client.patch_item(item_id, payload)
             return
         except APIException as e:
-            logger('Unable to move item ID:[' + str(item_id) + '] :: ' + str(e), True)
+            logger.error('Unable to move item ID:[' + str(item_id) + '] :: ' + str(e))
             retry_counter += 1
             time.sleep(retry_counter * retry_counter)
-    logger('Failed all ' + str(MAX_RETRIES) + ' attempts to move item ID:[' + str(item_id) + ']', True)
+    logger.error('Failed all ' + str(MAX_RETRIES) + ' attempts to move item ID:[' + str(item_id) + ']')
 
 
 def get_child_item_type(item_id):
