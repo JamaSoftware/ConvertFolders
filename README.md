@@ -11,6 +11,7 @@ Script that interacts with Jama's API to "convert" items into folders and texts.
 2. navigate to the directory in your terminal
 3. setup virtual environment `pipenv --python 3.7`
 4. shell in to the enviornment with `pipenv shell`
+5. install py-jama-rest-client `pip install py-jama-rest-client`
 5. install dependencies `pip install requests` followed by `pip install progress`
 6. open up the `config.ini` file to adjust the config variables. there are comments provided in this file. 
 7. run the script `python convert_folders.py` (edited) 
