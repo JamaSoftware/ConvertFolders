@@ -176,15 +176,6 @@ def get_stats_for_nerds():
     else:
         return True
 
-
-def get_create_snapshot():
-    create_snapshot = config['OPTIONS']['create snapshot'].lower()
-    if create_snapshot == 'false' or create_snapshot == 'no':
-        return False
-    else:
-        return True
-
-
 def get_set_ids():
     set_ids_string = config['PARAMETERS']['set item ids']
     split_ids = set_ids_string.split(',')
@@ -370,7 +361,7 @@ def get_pick_list_option(pick_list_option_id):
         return pick_list_option
 
 
-def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
+def process_children_items(root_item_id, child_item_type, bar):
     global moved_item_count, folder_conversion_count, text_conversion_count, synced_items_list
     children_items = item_id_to_child_map.get(root_item_id)
 
@@ -407,16 +398,9 @@ def process_children_items(root_item_id, temp_folder_id, child_item_type, bar):
                     continue
                 item_id_to_child_map[text_id] = item_id_to_child_map.get(item_id)
                 text_conversion_count += 1
-            # no? well we still need to do work here to maintain order
-            else:
-                #  unless we don't care about order?
-                if get_preserve_order():
-                    move_item_to_parent_location(item_id, temp_folder_id)
-                    move_item_to_parent_location(item_id, root_item_id)
-                    moved_item_count += 1
 
         # lets check for sub children here and recursively call this if there are
-        process_children_items(item_id, temp_folder_id, child_item_type, bar)
+        process_children_items(item_id, child_item_type, bar)
         bar.next()
 
 
@@ -436,14 +420,19 @@ def validate_item_id(item_id):
 #   3. delete the original item
 def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     item_id = item.get("id")
+    sort_order = item["location"]["sortOrder"]
     # lets confirm this item id is valid before we continue.
     if not validate_item_id(item_id):
         return -1
 
     logger.info('Detected item ID:[' + str(item_id) + '] converting this item to a FOLDER...')
-    folder_id = create_folder(item, child_item_type, parent_item_type_id)
+    folder_id = create_folder(item, child_item_type, parent_item_type_id, sort_order)
     if folder_id > 0:
         logger.info('Successfully converted item to type folder with new ID:[' + str(folder_id) + ']')
+    else:
+        logger.error('Failed to convert item ID:[' + str(item_id) + '] to FOLDER')
+        return -1
+
     children = []
     try:
         children = client.get_item_children(item_id)
@@ -453,12 +442,13 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
         child_item_id = child.get("id")
-        move_item_to_parent_location(child_item_id, folder_id)
+        move_item_to_parent_location(child_item_id, folder_id, None)
     # there should be zero children in the original item now.
-    try:
-        client.delete_item(item_id)
-    except APIException as e:
-        logger.error('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e))
+    if is_safe_for_delete(item_id):
+        try:
+            client.delete_item(item_id)
+        except APIException as e:
+            logger.error('Unab`le to delete the original item ID:[' + str(item_id) + ']... ' + str(e))
 
     return folder_id
 
@@ -469,14 +459,19 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
 #   3. delete the original item
 def convert_item_to_text(item, parent_item_type_id):
     item_id = item.get("id")
+    sort_order = item["location"]["sortOrder"]
     # lets confirm this item id is valid before we continue.
     if not validate_item_id(item_id):
         return -1
 
     logger.info('Detected item ID:[' + str(item_id) + '] converting this item to a TEXT...')
-    text_id = create_text(item, parent_item_type_id)
+    text_id = create_text(item, parent_item_type_id, sort_order)
     if text_id > 0:
         logger.info('Successfully converted item to type text with new ID:[' + str(text_id) + ']')
+    else:
+        logger.error('Failed to convert item ID:[' + str(item_id) + '] to TEXT')
+        return -1
+
     text_item_type_id = text_item_type.get('id')
     children = []
     try:
@@ -484,23 +479,36 @@ def convert_item_to_text(item, parent_item_type_id):
     # this is likely caused from a bad resource id (item id)
     except APIException as e:
         logger.error('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e))
-    # we will need to iterate over all the children here, and move them to the new folder
+    # we will need to iterate over all the children here, and move them to the new text
     for child in children:
         child_item_type_id = child.get('itemType')
         if child_item_type_id is text_item_type_id:
             child_item_id = child.get("id")
-            move_item_to_parent_location(child_item_id, text_id)
+            move_item_to_parent_location(child_item_id, text_id, None)
         else:
             logger.error('unable to move item ID:[' + str(child_item_id) + '] because this item is NOT of type text.')
 
     # there should be zero children in the original item now.
-    try:
-        client.delete_item(item_id)
-    except APIException as e:
-        logger.error('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e))
+    if is_safe_for_delete(item_id):
+        try:
+            client.delete_item(item_id)
+        except APIException as e:
+            logger.error('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e))
 
     return text_id
 
+def is_safe_for_delete(item_id):
+    try:
+        # validate that there is no more children on this item before we claim its safe for delete
+        children = client.get_item_children(item_id)
+        if children is None or children is [] or len(children) == 0:
+            return True
+        else:
+            return False
+
+    except APIException as e:
+        logger.error('Unable to find item with id:[' + str(item_id) + ']')
+        return False
 
 # recursively gets all the items and assigns them to a map, also gets the count
 def retrieve_items(root_item_id):
@@ -548,7 +556,7 @@ def get_fields_payload(fields):
 
 
 # create a folder item
-def create_folder(item, child_item_type, parent_item_id):
+def create_folder(item, child_item_type, parent_item_id, sort_order):
     fields = item.get('fields')
     fields = get_fields_payload(fields)
     project = item.get('project')
@@ -560,6 +568,12 @@ def create_folder(item, child_item_type, parent_item_id):
         global_id = 'FOLDER-' + item.get('globalId')
     try:
         response = client.post_item(project, folder_item_type_id, child_item_type, location, fields, global_id)
+        location_payload = [{
+            "op": "replace",
+            "path": "/location/sortOrder",
+            "value": sort_order
+        }]
+        client.patch_item(response, location_payload)
     except APIException as e:
         logger.error('Failed to convert item to folder. Exception: ' + str(e) + '\n'
             'item:' + str(item) + '\n' +
@@ -569,7 +583,7 @@ def create_folder(item, child_item_type, parent_item_id):
 
 
 # create a text item
-def create_text(item, parent_item_id):
+def create_text(item, parent_item_id, sort_order):
     fields = item.get('fields')
     fields = get_fields_payload(fields)
     project = item.get('project')
@@ -581,6 +595,12 @@ def create_text(item, parent_item_id):
         global_id = 'TEXT-' + item.get('globalId')
     try:
         response = client.post_item(project, text_item_type_id, text_item_type_id, location, fields, global_id)
+        location_payload = [{
+            "op": "replace",
+            "path": "/location/sortOrder",
+            "value": sort_order
+        }]
+        client.patch_item(response, location_payload)
     except APIException as e:
         logger.error('Failed to convert item to text. Exception: ' + str(e) + '\n'
             'item:' + str(item) + '\n' +
@@ -604,16 +624,23 @@ def create_temp_folder(root_set_item_id, child_item_type_id):
     return response
 
 
-def move_item_to_parent_location(item_id, destination_parent_id):
+def move_item_to_parent_location(item_id, destination_parent_id, sort_order):
     if item_id == destination_parent_id:
         return
-    payload = [
-        {
+
+    payload = [{
+        "op": "replace",
+        "path": "/location/parent",
+        "value": destination_parent_id
+    }]
+
+    if sort_order is not None:
+        payload.append({
             "op": "replace",
-            "path": "/location/parent",
-            "value": destination_parent_id
-        }
-    ]
+            "path": "/location/sortOrder",
+            "value": sort_order
+        })
+
     retry_counter = 0
     while retry_counter < MAX_RETRIES:
         try:
@@ -712,28 +739,14 @@ if __name__ == '__main__':
         retrieve_items(set_item_id)
         logger.info('Successfully retrieved ' + str(item_count) + ' items.')
 
-        # create a backup of the data
-        if get_create_snapshot():
-            logger.info('Saving current state of item in set [' + str(set_item_id) + '] to json file.')
-            create_snapshot(set_item_id)
-
         # get the child item type form the root set
         child_item_type = get_child_item_type(set_item_id)
-        # create a temp folder
-        temp_folder_id = create_temp_folder(set_item_id, child_item_type)
-        if temp_folder_id is None:
-            logger.error("skipping processing this set...")
-            continue
+
 
         if item_count > 0:
             with ChargingBar('Processing Items', max=item_count, suffix='%(percent).1f%% - %(eta)ds') as bar:
-                process_children_items(set_item_id, temp_folder_id, child_item_type, bar)
+                process_children_items(set_item_id, child_item_type, bar)
                 bar.finish()
-
-        try:
-            client.delete_item(temp_folder_id)
-        except APIException as e:
-            logger.error('Unable to delete temp folder with ID:['+ str(temp_folder_id) + '] Exception: ' + str(e))
 
         logger.info('Finished processing set id: [' + str(set_item_id) + ']\n')
         reset_set_item_variables()
@@ -746,4 +759,3 @@ if __name__ == '__main__':
         logger.error('total execution time: ' + str(elapsed_time) + ' seconds')
         logger.error('# items converted into folder(s): ' + str(folder_conversion_count))
         logger.error('# items converted into text(s): ' + str(text_conversion_count))
-        logger.error('# items re-indexed: ' + str(moved_item_count))
