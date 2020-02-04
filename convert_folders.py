@@ -101,7 +101,6 @@ def init_logger():
     return logger
 
 
-
 def validate_parameters():
     set_ids_string = config['PARAMETERS']['set item ids']
     folder_api_field_names = config['PARAMETERS']['folder api field names']
@@ -146,6 +145,7 @@ def get_convert_folders():
     else:
         return True
 
+
 def get_convert_texts():
     convert_texts = config['PARAMETERS']['convert texts'].lower()
     if convert_texts == 'false' or convert_texts == 'no':
@@ -161,6 +161,7 @@ def get_resync_items():
     else:
         return True
 
+
 def get_preserve_order():
     preserve_order = config['OPTIONS']['preserve order'].lower()
     if preserve_order == 'false' or preserve_order == 'no':
@@ -175,6 +176,7 @@ def get_stats_for_nerds():
         return False
     else:
         return True
+
 
 def get_set_ids():
     set_ids_string = config['PARAMETERS']['set item ids']
@@ -213,7 +215,7 @@ def validate_credentials():
     for credential in credentials:
         if credential not in config['CREDENTIALS']:
             logger.error("Config missing required credential '" + credential
-                  + "', confirm this is present in the config.ini file.")
+                         + "', confirm this is present in the config.ini file.")
             return False
     return True
 
@@ -355,7 +357,8 @@ def get_pick_list_option(pick_list_option_id):
         try:
             pick_list_option = client.get_pick_list_option(pick_list_option_id)
         except APIException as e:
-            logger.error('Unable to retrieve picklist options for picklist ID:[' + str(pick_list_option_id) + ']. Exception: ' + str(e))
+            logger.error('Unable to retrieve picklist options for picklist ID:[' + str(
+                pick_list_option_id) + ']. Exception: ' + str(e))
             return None
         pick_list_option_map[pick_list_option_id] = pick_list_option
         return pick_list_option
@@ -428,7 +431,7 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     logger.info('Detected item ID:[' + str(item_id) + '] converting this item to a FOLDER...')
     folder_id = create_folder(item, child_item_type, parent_item_type_id, sort_order)
     if folder_id > 0:
-        logger.info('Successfully converted item to type folder with new ID:[' + str(folder_id) + ']')
+        logger.info('Successfully created item of type folder with new ID:[' + str(folder_id) + ']')
     else:
         logger.error('Failed to convert item ID:[' + str(item_id) + '] to FOLDER')
         return -1
@@ -442,13 +445,16 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
     # we will need to iterate over all the children here, and move them to the new folder
     for child in children:
         child_item_id = child.get("id")
-        move_item_to_parent_location(child_item_id, folder_id, None)
-    # there should be zero children in the original item now.
-    if is_safe_for_delete(item_id):
-        try:
-            client.delete_item(item_id)
-        except APIException as e:
-            logger.error('Unab`le to delete the original item ID:[' + str(item_id) + ']... ' + str(e))
+        # if we fail then we need to skip processing siblings
+        if not move_item_to_parent_location(child_item_id, folder_id, None):
+            logger.error('Failed to move item child item ID:[' + str(child_item_id) + '] to parent location ID:[' + str(
+                folder_id) + ']')
+            break
+
+    if not safe_delete(item_id):
+        logger.error('Failed to delete original item ID:[' + str(item_id) + ']. this will be an extra item')
+    else:
+        logger.info('Successfully converted item from id:[' + str(item_id) + '] --> into id:[' + str(folder_id) + ']')
 
     return folder_id
 
@@ -467,7 +473,7 @@ def convert_item_to_text(item, parent_item_type_id):
     logger.info('Detected item ID:[' + str(item_id) + '] converting this item to a TEXT...')
     text_id = create_text(item, parent_item_type_id, sort_order)
     if text_id > 0:
-        logger.info('Successfully converted item to type text with new ID:[' + str(text_id) + ']')
+        logger.info('Successfully created new item of type text with new ID:[' + str(text_id) + ']')
     else:
         logger.error('Failed to convert item ID:[' + str(item_id) + '] to TEXT')
         return -1
@@ -484,18 +490,40 @@ def convert_item_to_text(item, parent_item_type_id):
         child_item_type_id = child.get('itemType')
         if child_item_type_id is text_item_type_id:
             child_item_id = child.get("id")
-            move_item_to_parent_location(child_item_id, text_id, None)
+            # if we fail then we need to skip processing siblings
+            if not move_item_to_parent_location(child_item_id, text_id, None):
+                logger.error(
+                    'Failed to move item child item ID:[' + str(child_item_id) + '] to parent location ID:[' + str(
+                        text_id) + ']')
+                break
         else:
             logger.error('unable to move item ID:[' + str(child_item_id) + '] because this item is NOT of type text.')
 
+    if not safe_delete(item_id):
+        logger.error('Failed to delete original item ID:[' + str(item_id) + ']. this will be an extra item')
+    else:
+        logger.info('Successfully converted item from id:[' + str(item_id) + '] --> into id:[' + str(text_id) + ']')
+
+    return text_id
+
+
+def safe_delete(item_id):
     # there should be zero children in the original item now.
     if is_safe_for_delete(item_id):
         try:
-            client.delete_item(item_id)
+            response = client.delete_item(item_id)
+            if response == 204:
+                return True
+            else:
+                logger.error(
+                    'Unable to delete the original item ID:[' + str(item_id) + ']. with status code: ' + str(response))
         except APIException as e:
             logger.error('Unable to delete the original item ID:[' + str(item_id) + ']... ' + str(e))
+    else:
+        logger.error('Unable to delete the original item ID:[' + str(
+            item_id) + ']. This item still has children and is not safe for removal')
+    return False
 
-    return text_id
 
 def is_safe_for_delete(item_id):
     try:
@@ -509,6 +537,7 @@ def is_safe_for_delete(item_id):
     except APIException as e:
         logger.error('Unable to find item with id:[' + str(item_id) + ']')
         return False
+
 
 # recursively gets all the items and assigns them to a map, also gets the count
 def retrieve_items(root_item_id):
@@ -576,8 +605,8 @@ def create_folder(item, child_item_type, parent_item_id, sort_order):
         client.patch_item(response, location_payload)
     except APIException as e:
         logger.error('Failed to convert item to folder. Exception: ' + str(e) + '\n'
-            'item:' + str(item) + '\n' +
-            'parent item ID:' + str(parent_item_id))
+                                                                                'item:' + str(item) + '\n' +
+                     'parent item ID:' + str(parent_item_id))
         return -1
     return response
 
@@ -603,8 +632,8 @@ def create_text(item, parent_item_id, sort_order):
         client.patch_item(response, location_payload)
     except APIException as e:
         logger.error('Failed to convert item to text. Exception: ' + str(e) + '\n'
-            'item:' + str(item) + '\n' +
-            'parent item ID:' + str(parent_item_id))
+                                                                              'item:' + str(item) + '\n' +
+                     'parent item ID:' + str(parent_item_id))
         return -1
     return response
 
@@ -626,7 +655,7 @@ def create_temp_folder(root_set_item_id, child_item_type_id):
 
 def move_item_to_parent_location(item_id, destination_parent_id, sort_order):
     if item_id == destination_parent_id:
-        return
+        return False
 
     payload = [{
         "op": "replace",
@@ -645,12 +674,13 @@ def move_item_to_parent_location(item_id, destination_parent_id, sort_order):
     while retry_counter < MAX_RETRIES:
         try:
             client.patch_item(item_id, payload)
-            return
+            return True
         except APIException as e:
             logger.error('Unable to move item ID:[' + str(item_id) + '] :: ' + str(e))
             retry_counter += 1
             time.sleep(retry_counter * retry_counter)
     logger.error('Failed all ' + str(MAX_RETRIES) + ' attempts to move item ID:[' + str(item_id) + ']')
+    return False
 
 
 def get_child_item_type(item_id):
@@ -673,11 +703,11 @@ if __name__ == '__main__':
     start = time.time()
     init_globals()
     logger.info('\n'
-          + '     ____     __   __          _____                      __           \n'
-          + '    / __/__  / /__/ /__ ____  / ___/__  ___ _  _____ ____/ /____  ____ \n'
-          + '   / _// _ \/ / _  / -_) __/ / /__/ _ \/ _ \ |/ / -_) __/ __/ _ \/ __/ \n'
-          + '  /_/  \___/_/\_,_/\__/_/    \___/\___/_//_/___/\__/_/  \__/\___/_/    \n'
-          + '                               Jama Software - Professional Services   \n')
+                + '     ____     __   __          _____                      __           \n'
+                + '    / __/__  / /__/ /__ ____  / ___/__  ___ _  _____ ____/ /____  ____ \n'
+                + '   / _// _ \/ / _  / -_) __/ / /__/ _ \/ _ \ |/ / -_) __/ __/ _ \/ __/ \n'
+                + '  /_/  \___/_/\_,_/\__/_/    \___/\___/_//_/___/\__/_/  \__/\___/_/    \n'
+                + '                               Jama Software - Professional Services   \n')
 
     config = configparser.ConfigParser()
     config.read('config.ini')
@@ -686,7 +716,7 @@ if __name__ == '__main__':
     if not validate_credentials():
         sys.exit()
 
-    client  = init_jama_client()
+    client = init_jama_client()
 
     # validate user data
     if not validate_user_credentials(client):
@@ -732,7 +762,7 @@ if __name__ == '__main__':
 
         # show some data about how we just did
         logger.info('Processing Set <' + config['CREDENTIALS']['instance url'] + '/perspective.req#/containers/'
-              + str(set_item_id) + '?projectId=' + str(set_item.get('project')) + '>')
+                    + str(set_item_id) + '?projectId=' + str(set_item.get('project')) + '>')
 
         # lets pull the entire hierarchy under this set
         logger.info('Retrieving all children items from set id: [' + str(set_item_id) + '] ...')
@@ -741,7 +771,6 @@ if __name__ == '__main__':
 
         # get the child item type form the root set
         child_item_type = get_child_item_type(set_item_id)
-
 
         if item_count > 0:
             with ChargingBar('Processing Items', max=item_count, suffix='%(percent).1f%% - %(eta)ds') as bar:
