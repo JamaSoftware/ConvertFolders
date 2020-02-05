@@ -673,18 +673,32 @@ def move_item_to_parent_location(item_id, destination_parent_id, sort_order):
     retry_counter = 0
     while retry_counter < MAX_RETRIES:
         try:
-            patch_status = client.patch_item(item_id, payload)
-            if patch_status == 'OK':
+            client.patch_item(item_id, payload)
+            if validate_move_operation(item_id, destination_parent_id, sort_order):
                 return True
             else:
-                logger.error('Unable to move item ID:[' + str(item_id) + '], API status: ' + str(patch_status))
-                return False
+                move_item_to_parent_location(item_id, destination_parent_id, sort_order)
         except APIException as e:
             logger.error('Unable to move item ID:[' + str(item_id) + '] :: ' + str(e))
             retry_counter += 1
             time.sleep(retry_counter * retry_counter)
     logger.error('Failed all ' + str(MAX_RETRIES) + ' attempts to move item ID:[' + str(item_id) + ']')
     return False
+
+# i suspect we cannot trust the move operation on sort order.
+def validate_move_operation(item_id, destination_parent_id, sort_order):
+    try:
+        item = client.get_item(item_id)
+    except APIException as e:
+        return False
+
+    if item['location']['parent']['item'] != destination_parent_id:
+        return False
+    elif sort_order is not None and item['location']['sortOrder'] != sort_order:
+        return False
+    else:
+        return True
+
 
 
 def get_child_item_type(item_id):
