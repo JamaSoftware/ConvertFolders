@@ -673,8 +673,12 @@ def move_item_to_parent_location(item_id, destination_parent_id, sort_order):
     retry_counter = 0
     while retry_counter < MAX_RETRIES:
         try:
-            client.patch_item(item_id, payload)
-            return True
+            patch_status = client.patch_item(item_id, payload)
+            if patch_status == 'OK':
+                return True
+            else:
+                logger.error('Unable to move item ID:[' + str(item_id) + '], API status: ' + str(patch_status))
+                return False
         except APIException as e:
             logger.error('Unable to move item ID:[' + str(item_id) + '] :: ' + str(e))
             retry_counter += 1
