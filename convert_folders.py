@@ -436,20 +436,7 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
         logger.error('Failed to convert item ID:[' + str(item_id) + '] to FOLDER')
         return -1
 
-    children = []
-    try:
-        children = client.get_item_children(item_id)
-    # this is likely caused from a bad resource id (item id)
-    except APIException as e:
-        logger.error('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e))
-    # we will need to iterate over all the children here, and move them to the new folder
-    for child in children:
-        child_item_id = child.get("id")
-        # if we fail then we need to skip processing siblings
-        if not move_item_to_parent_location(child_item_id, folder_id, None):
-            logger.error('Failed to move item child item ID:[' + str(child_item_id) + '] to parent location ID:[' + str(
-                folder_id) + ']')
-            break
+    move_children(item_id, folder_id)
 
     if not safe_delete(item_id):
         logger.error('Failed to delete original item ID:[' + str(item_id) + ']. this will be an extra item')
@@ -457,6 +444,49 @@ def convert_item_to_folder(item, child_item_type, parent_item_type_id):
         logger.info('Successfully converted item from id:[' + str(item_id) + '] --> into id:[' + str(folder_id) + ']')
 
     return folder_id
+
+
+def move_children(parent_id, destination_id):
+    children = []
+    try:
+        children = client.get_item_children(parent_id)
+    # this is likely caused from a bad resource id (item id)
+    except APIException as e:
+        logger.error('Unable to get retrieve children for item ID:[' + str(parent_id) + ']... ' + str(e))
+    # we will need to iterate over all the children here, and move them to the new folder
+    for child in children:
+        child_item_id = child.get("id")
+        # if we fail then we need to skip processing siblings
+        if not move_item_to_parent_location(child_item_id, destination_id, None):
+            logger.error('Failed to move item child item ID:[' + str(child_item_id) + '] to parent location ID:[' + str(
+                destination_id) + ']')
+            break
+
+    # there is a defect with the API move operation where some move ops may fail. the following checks for
+    # any remaining lost children and puts them under the correct parent.
+
+    # do we have any remaining children here? lets validate that the move operations were sucessful
+    lost_children = client.get_item_children(parent_id)
+    if len(lost_children) > 0:
+        # iterate over the remaining children here
+        for lost_child in lost_children:
+
+            sort_order = 0
+
+            # we are going to need to determine the sort order of this lost child
+            for original_child in children:
+                if lost_child['id'] == original_child['id']:
+                    sort_order = original_child['location']['sortOrder']
+                    break
+
+            # lets move this lost child to its proper parent
+            lost_child_item_id = lost_child.get("id")
+            # if we fail then we need to skip processing siblings
+            if not move_item_to_parent_location(lost_child_item_id, destination_id, sort_order):
+                logger.error(
+                    'Failed to move item child item ID:[' + str(lost_child_item_id) + '] to parent location ID:[' + str(
+                        destination_id) + ']')
+                break
 
 
 # this is the "convert" (those are dramatic air quotes) here is how we are going to convert this:
@@ -478,26 +508,7 @@ def convert_item_to_text(item, parent_item_type_id):
         logger.error('Failed to convert item ID:[' + str(item_id) + '] to TEXT')
         return -1
 
-    text_item_type_id = text_item_type.get('id')
-    children = []
-    try:
-        children = client.get_item_children(item_id)
-    # this is likely caused from a bad resource id (item id)
-    except APIException as e:
-        logger.error('Unable to get retrieve children for item ID:[' + str(item_id) + ']... ' + str(e))
-    # we will need to iterate over all the children here, and move them to the new text
-    for child in children:
-        child_item_type_id = child.get('itemType')
-        if child_item_type_id is text_item_type_id:
-            child_item_id = child.get("id")
-            # if we fail then we need to skip processing siblings
-            if not move_item_to_parent_location(child_item_id, text_id, None):
-                logger.error(
-                    'Failed to move item child item ID:[' + str(child_item_id) + '] to parent location ID:[' + str(
-                        text_id) + ']')
-                break
-        else:
-            logger.error('unable to move item ID:[' + str(child_item_id) + '] because this item is NOT of type text.')
+    move_children(item_id, text_id)
 
     if not safe_delete(item_id):
         logger.error('Failed to delete original item ID:[' + str(item_id) + ']. this will be an extra item')
@@ -674,9 +685,12 @@ def move_item_to_parent_location(item_id, destination_parent_id, sort_order):
     while retry_counter < MAX_RETRIES:
         try:
             client.patch_item(item_id, payload)
+            time.sleep(1)
             if validate_move_operation(item_id, destination_parent_id, sort_order):
                 return True
             else:
+                # wait a sec before proceeding to try again.
+                time.sleep(1)
                 move_item_to_parent_location(item_id, destination_parent_id, sort_order)
         except APIException as e:
             logger.error('Unable to move item ID:[' + str(item_id) + '] :: ' + str(e))
@@ -684,6 +698,7 @@ def move_item_to_parent_location(item_id, destination_parent_id, sort_order):
             time.sleep(retry_counter * retry_counter)
     logger.error('Failed all ' + str(MAX_RETRIES) + ' attempts to move item ID:[' + str(item_id) + ']')
     return False
+
 
 # i suspect we cannot trust the move operation on sort order.
 def validate_move_operation(item_id, destination_parent_id, sort_order):
@@ -698,7 +713,6 @@ def validate_move_operation(item_id, destination_parent_id, sort_order):
         return False
     else:
         return True
-
 
 
 def get_child_item_type(item_id):
