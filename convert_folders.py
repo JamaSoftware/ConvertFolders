@@ -817,6 +817,6 @@ if __name__ == '__main__':
     # here are some fun stats for nerds
     if get_stats_for_nerds():
         elapsed_time = '%.2f' % (time.time() - start)
-        logger.error('total execution time: ' + str(elapsed_time) + ' seconds')
-        logger.error('# items converted into folder(s): ' + str(folder_conversion_count))
-        logger.error('# items converted into text(s): ' + str(text_conversion_count))
+        logger.info('total execution time: ' + str(elapsed_time) + ' seconds')
+        logger.info('# items converted into folder(s): ' + str(folder_conversion_count))
+        logger.info('# items converted into text(s): ' + str(text_conversion_count))
