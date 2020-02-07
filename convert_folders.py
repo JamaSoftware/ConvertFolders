@@ -466,28 +466,34 @@ def move_children(parent_id, destination_id):
     # any remaining lost children and puts them under the correct parent.
 
     # do we have any remaining children here? lets validate that the move operations were sucessful
-    lost_children = client.get_item_children(parent_id)
-    if len(lost_children) > 0:
-        # iterate over the remaining children here
-        for lost_child in lost_children:
+    retry_count = 10
+    attempt = 0
+    while attempt < retry_count:
+        attempt += 1
+        lost_children = client.get_item_children(parent_id)
+        if len(lost_children) > 0:
+            time.sleep(1)
+            # iterate over the remaining children here
+            for lost_child in lost_children:
 
-            sort_order = 0
+                sort_order = 0
 
-            # we are going to need to determine the sort order of this lost child
-            for original_child in children:
-                if lost_child['id'] == original_child['id']:
-                    sort_order = original_child['location']['sortOrder']
+                # we are going to need to determine the sort order of this lost child
+                for original_child in children:
+                    if lost_child['id'] == original_child['id']:
+                        sort_order = original_child['location']['sortOrder']
+                        break
+
+                # lets move this lost child to its proper parent
+                lost_child_item_id = lost_child.get("id")
+                # if we fail then we need to skip processing siblings
+                if not move_item_to_parent_location(lost_child_item_id, destination_id, sort_order):
+                    logger.error(
+                        'Failed to move item child item ID:[' + str(lost_child_item_id) + '] to parent location ID:[' + str(
+                            destination_id) + ']')
                     break
-
-            # lets move this lost child to its proper parent
-            lost_child_item_id = lost_child.get("id")
-            # if we fail then we need to skip processing siblings
-            if not move_item_to_parent_location(lost_child_item_id, destination_id, sort_order):
-                logger.error(
-                    'Failed to move item child item ID:[' + str(lost_child_item_id) + '] to parent location ID:[' + str(
-                        destination_id) + ']')
-                break
-
+        else:
+            break
 
 # this is the "convert" (those are dramatic air quotes) here is how we are going to convert this:
 #   1. create a text item with the same parent
@@ -646,21 +652,6 @@ def create_text(item, parent_item_id, sort_order):
                                                                               'item:' + str(item) + '\n' +
                      'parent item ID:' + str(parent_item_id))
         return -1
-    return response
-
-
-# create a temp folder soo we can re-order the items. (API does not allow you to change the order)
-def create_temp_folder(root_set_item_id, child_item_type_id):
-    item = client.get_item(root_set_item_id)
-    project = item.get('project')
-    folder_item_type_id = folder_item_type.get('id')
-    location = {'item': set_item_id}
-    fields = {"name": "TEMP"}
-    try:
-        response = client.post_item(project, folder_item_type_id, child_item_type_id, location, fields, None)
-    except APIException as e:
-        logger.error('Unable to create a temporary folder for reindexing items. Exception e: ' + str(e))
-        return None
     return response
 
 
